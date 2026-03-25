@@ -1,0 +1,739 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KEN OPS Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0f; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+// ─── CONFIG ────────────────────────────────────────────────────
+const PROJECTS = [
+  { id: "kai", name: "Kai商品化", emoji: "\u{1F525}", color: "#FF6B35", milestones: ["MVP完成", "決済導入", "契約書整備", "初課金ユーザー", "月10社"], done: [0] },
+  { id: "golfin", name: "GOLFIN", emoji: "\u26F3", color: "#2EC4B6", milestones: ["β版リリース", "GPS実装", "ゲーム統合", "100ユーザー", "トークン発行"], done: [0] },
+  { id: "funding", name: "資金繰り", emoji: "\u{1F4B0}", color: "#E71D36", milestones: ["債務整理開始", "返済ロードマップ", "売上ライン確保", "月次黒字", "シリーズA調達"], done: [0] },
+  { id: "vexum", name: "VEXUM", emoji: "\u{1F3E2}", color: "#7B68EE", milestones: ["契約締結", "営業方針確定", "初成約", "月間3件"], done: [0] },
+  { id: "club361", name: "club361\u00B0", emoji: "\u{1F3AF}", color: "#FF9F1C", milestones: ["運営開始", "10名参加", "月次イベント定着"], done: [0] },
+  { id: "sake_nft", name: "日本酒NFT", emoji: "\u{1F376}", color: "#D4A574", milestones: ["企画確定", "パートナー契約", "NFT発行"], done: [] },
+  { id: "pokedao", name: "ポケダオ", emoji: "\u{1F3AE}", color: "#E040FB", milestones: ["仕組み設計", "ターゲットリスト", "ローンチ"], done: [] },
+  { id: "ai_agent", name: "AIエージェント", emoji: "\u{1F916}", color: "#00B8D4", milestones: ["Kai稼働", "並列運用設計", "クライアント展開"], done: [0] },
+  { id: "ss_kaikei", name: "SS会計", emoji: "\u{1F4CA}", color: "#66BB6A", milestones: ["MVP完成", "セキュリティ", "本番運用"], done: [0] },
+  { id: "self", name: "自分自身", emoji: "\u{1F9D1}\u200D\u{1F4BC}", color: "#78909C", milestones: ["日次ルーティン確立", "週次レビュー定着"], done: [] },
+  { id: "company", name: "全社", emoji: "\u{1F3DB}", color: "#8D6E63", milestones: ["株主登記", "書類整備", "会計体制", "監査対応"], done: [] },
+  { id: "shinkawa", name: "新川問題", emoji: "\u26A0\uFE0F", color: "#FF5252", milestones: ["クレカ解決"], done: [] },
+];
+
+const PRIORITIES = [
+  { id: "urgent", label: "緊急", emoji: "\u{1F534}", sort: 0, pts: 40 },
+  { id: "high", label: "高", emoji: "\u{1F7E0}", sort: 1, pts: 25 },
+  { id: "medium", label: "中", emoji: "\u{1F7E1}", sort: 2, pts: 15 },
+  { id: "low", label: "低", emoji: "\u{1F535}", sort: 3, pts: 10 },
+];
+
+const STATUSES = ["To Do", "Doing", "Done"];
+
+const LEVELS = [
+  { lv: 1, title: "インターン", req: 0 },
+  { lv: 2, title: "アソシエイト", req: 100 },
+  { lv: 3, title: "リーダー", req: 250 },
+  { lv: 5, title: "マネージャー", req: 500 },
+  { lv: 8, title: "ディレクター", req: 1000 },
+  { lv: 10, title: "VP", req: 1800 },
+  { lv: 15, title: "SVP", req: 3000 },
+  { lv: 20, title: "CEO", req: 5000 },
+  { lv: 30, title: "上場準備", req: 10000 },
+  { lv: 50, title: "NASDAQ", req: 25000 },
+];
+
+const INITIAL_TASKS = [
+  { id: "1", title: "日本酒NFT コメント書く", project: "sake_nft", priority: "urgent", deadline: "2026-03-25", status: "To Do", note: "今日中に必ず" },
+  { id: "2", title: "日本酒NFT MTG準備", project: "sake_nft", priority: "urgent", deadline: "2026-03-26", status: "To Do", note: "" },
+  { id: "3", title: "資金繰り：明後日の対応方針", project: "funding", priority: "urgent", deadline: "2026-03-27", status: "To Do", note: "" },
+  { id: "4", title: "新川さんクレカ問題対応", project: "shinkawa", priority: "urgent", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "5", title: "滞ってるクレカ・未払い対応", project: "funding", priority: "urgent", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "6", title: "決済システム選定・導入", project: "kai", priority: "high", deadline: "2026-03-29", status: "To Do", note: "Stripe?" },
+  { id: "7", title: "契約書ドラフト作成", project: "kai", priority: "high", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "8", title: "支払いサイクル設計", project: "kai", priority: "high", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "9", title: "営業チーム体制検討", project: "kai", priority: "high", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "10", title: "セサルにロードマップ確認", project: "golfin", priority: "high", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "11", title: "GPS機能開発", project: "golfin", priority: "high", deadline: "", status: "Doing", note: "自分担当" },
+  { id: "12", title: "VEXUM営業方針決定", project: "vexum", priority: "high", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "13", title: "ゆうたさん300返済計画", project: "funding", priority: "high", deadline: "", status: "To Do", note: "" },
+  { id: "14", title: "太田さん100返済計画", project: "funding", priority: "high", deadline: "", status: "To Do", note: "" },
+  { id: "15", title: "バラキヨさん3000ドル返済計画", project: "funding", priority: "high", deadline: "", status: "To Do", note: "" },
+  { id: "16", title: "返済ロードマップ作成", project: "funding", priority: "high", deadline: "2026-03-29", status: "To Do", note: "" },
+  { id: "17", title: "西川さん361°サポート", project: "club361", priority: "medium", deadline: "2026-04-01", status: "To Do", note: "" },
+  { id: "18", title: "GOLFIN SNS運用開始", project: "golfin", priority: "medium", deadline: "2026-04-01", status: "To Do", note: "" },
+  { id: "19", title: "スケジュール管理の仕組み", project: "self", priority: "medium", deadline: "2026-04-01", status: "To Do", note: "" },
+  { id: "20", title: "ゴール設定・達成指標", project: "self", priority: "medium", deadline: "2026-04-01", status: "To Do", note: "" },
+  { id: "21", title: "お金を作る方法の整理", project: "funding", priority: "medium", deadline: "2026-04-01", status: "To Do", note: "" },
+  { id: "22", title: "AI開発チーム並列運用設計", project: "ai_agent", priority: "medium", deadline: "2026-04-01", status: "To Do", note: "" },
+  { id: "23", title: "Kai/Claude活用効率化", project: "ai_agent", priority: "medium", deadline: "2026-04-01", status: "To Do", note: "" },
+  { id: "24", title: "会計ソフト：セキュリティ", project: "ss_kaikei", priority: "low", deadline: "2026-04-08", status: "To Do", note: "" },
+  { id: "25", title: "会計ソフト：ログイン", project: "ss_kaikei", priority: "low", deadline: "2026-04-08", status: "To Do", note: "" },
+  { id: "26", title: "会計ソフト：管理画面", project: "ss_kaikei", priority: "low", deadline: "2026-04-08", status: "To Do", note: "" },
+  { id: "27", title: "ポケダオ：ステーキング設計", project: "pokedao", priority: "low", deadline: "2026-04-30", status: "To Do", note: "" },
+  { id: "28", title: "ポケダオ：ターゲットリスト", project: "pokedao", priority: "low", deadline: "2026-04-30", status: "To Do", note: "" },
+  { id: "29", title: "GOLFINトークン設計", project: "golfin", priority: "low", deadline: "2026-04-30", status: "To Do", note: "" },
+  { id: "30", title: "NASDAQ準備の整理", project: "company", priority: "low", deadline: "2026-05-31", status: "To Do", note: "" },
+  { id: "31", title: "株主登記", project: "company", priority: "low", deadline: "2026-05-31", status: "To Do", note: "" },
+  { id: "32", title: "書類業務の棚卸し", project: "company", priority: "low", deadline: "2026-05-31", status: "To Do", note: "" },
+];
+
+const DEFAULT_ROUTINES = [
+  { id: "r1", title: "SNS更新", freq: "daily", time: "09:00", pts: 10, project: "golfin" },
+  { id: "r2", title: "ブレインダンプ", freq: "daily", time: "08:00", pts: 10, project: "self" },
+  { id: "r3", title: "Duolingo", freq: "daily", time: "07:30", pts: 5, project: "self" },
+  { id: "r4", title: "週次レビュー", freq: "weekly_mon", time: "10:00", pts: 20, project: "self" },
+];
+
+const STORAGE_KEY = "ken-ops-v2";
+const getProject = (id) => PROJECTS.find(p => p.id === id) || PROJECTS[0];
+const getPriority = (id) => PRIORITIES.find(p => p.id === id) || PRIORITIES[3];
+const todayStr = () => new Date().toISOString().split("T")[0];
+const daysBetween = (d1, d2) => Math.round((new Date(d2 + "T00:00:00") - new Date(d1 + "T00:00:00")) / 86400000);
+const addDays = (ds, n) => { const d = new Date(ds + "T00:00:00"); d.setDate(d.getDate() + n); return d.toISOString().split("T")[0]; };
+
+const inputStyle = { width: "100%", padding: "8px 12px", borderRadius: "8px", border: "1px solid #1e1e3a", background: "#0d0d18", color: "#ddd", fontSize: "13px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" };
+
+function getLevel(totalPts) {
+  let curr = LEVELS[0];
+  for (const l of LEVELS) { if (totalPts >= l.req) curr = l; else break; }
+  const next = LEVELS.find(l => l.req > totalPts) || LEVELS[LEVELS.length - 1];
+  const pctToNext = next.req > curr.req ? ((totalPts - curr.req) / (next.req - curr.req)) * 100 : 100;
+  return { ...curr, next, pctToNext, totalPts };
+}
+
+// localStorage helper
+const storage = {
+  get(key) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
+};
+
+// ─── MAIN APP ──────────────────────────────────────────────────
+function App() {
+  const [tasks, setTasks] = useState([]);
+  const [routines, setRoutines] = useState([]);
+  const [gameState, setGameState] = useState({ totalPts: 0, streak: 0, lastActiveDate: "", weeklyPts: [], completedToday: 0 });
+  const [view, setView] = useState("dashboard");
+  const [projectFilter, setProjectFilter] = useState("all");
+  const [sortBy, setSortBy] = useState("priority");
+  const [draggedTask, setDraggedTask] = useState(null);
+  const [editingTask, setEditingTask] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showRoutineModal, setShowRoutineModal] = useState(false);
+  const [focusTask, setFocusTask] = useState(null);
+  const [celebration, setCelebration] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+
+  // Load
+  useEffect(() => {
+    const d = storage.get(STORAGE_KEY);
+    if (d) {
+      setTasks(d.tasks || INITIAL_TASKS);
+      setRoutines(d.routines || DEFAULT_ROUTINES);
+      setGameState(d.gameState || { totalPts: 0, streak: 0, lastActiveDate: "", weeklyPts: [], completedToday: 0 });
+    } else {
+      setTasks(INITIAL_TASKS);
+      setRoutines(DEFAULT_ROUTINES);
+    }
+    setLoaded(true);
+  }, []);
+
+  // Save
+  useEffect(() => {
+    if (!loaded) return;
+    storage.set(STORAGE_KEY, { tasks, routines, gameState });
+  }, [tasks, routines, gameState, loaded]);
+
+  // Streak check on load
+  useEffect(() => {
+    if (!loaded) return;
+    const today = todayStr();
+    const yesterday = addDays(today, -1);
+    setGameState(prev => {
+      if (prev.lastActiveDate === today) return prev;
+      if (prev.lastActiveDate === yesterday) return { ...prev, completedToday: 0 };
+      if (prev.lastActiveDate && prev.lastActiveDate < yesterday) return { ...prev, streak: 0, completedToday: 0 };
+      return prev;
+    });
+  }, [loaded]);
+
+  const completeTask = useCallback((id) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task || task.status === "Done") return;
+    const pts = getPriority(task.priority).pts;
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: "Done" } : t));
+    const today = todayStr();
+    setGameState(prev => {
+      const newCompleted = prev.completedToday + 1;
+      const isStreak = newCompleted >= 3 && prev.lastActiveDate !== today;
+      const bonus = newCompleted === 3 ? 50 : 0;
+      const newPts = prev.totalPts + pts + bonus;
+      const newStreak = isStreak ? prev.streak + 1 : prev.streak;
+      const wp = [...(prev.weeklyPts || [])];
+      const lastEntry = wp[wp.length - 1];
+      if (lastEntry && lastEntry.date === today) { lastEntry.pts += pts + bonus; }
+      else { wp.push({ date: today, pts: pts + bonus }); }
+      if (wp.length > 30) wp.shift();
+      return { totalPts: newPts, streak: newStreak, lastActiveDate: today, weeklyPts: wp, completedToday: newCompleted };
+    });
+    setCelebration({ pts, task });
+    setTimeout(() => setCelebration(null), 2500);
+  }, [tasks]);
+
+  const updateTask = useCallback((id, updates) => {
+    if (updates.status === "Done") { completeTask(id); return; }
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+  }, [completeTask]);
+
+  const addTask = useCallback((task) => setTasks(prev => [...prev, { ...task, id: Date.now().toString() }]), []);
+  const deleteTask = useCallback((id) => setTasks(prev => prev.filter(t => t.id !== id)), []);
+
+  const filteredTasks = tasks.filter(t => projectFilter === "all" || t.project === projectFilter);
+  const sortedTasks = [...filteredTasks].sort((a, b) => {
+    if (sortBy === "priority") return getPriority(a.priority).sort - getPriority(b.priority).sort;
+    if (sortBy === "deadline") { if (!a.deadline) return 1; if (!b.deadline) return -1; return a.deadline.localeCompare(b.deadline); }
+    return 0;
+  });
+
+  const today = todayStr();
+  const todayTasks = tasks.filter(t => t.deadline === today && t.status !== "Done");
+  const urgentTasks = tasks.filter(t => t.priority === "urgent" && t.status !== "Done");
+  const doingTasks = tasks.filter(t => t.status === "Doing");
+  const overdueTasks = tasks.filter(t => t.deadline && t.deadline < today && t.status !== "Done");
+  const level = getLevel(gameState.totalPts);
+
+  const handleDragStart = (e, task) => { setDraggedTask(task); e.dataTransfer.effectAllowed = "move"; };
+  const handleDrop = (e, status) => { e.preventDefault(); if (draggedTask) { updateTask(draggedTask.id, { status }); setDraggedTask(null); } };
+
+  const startFocus = () => {
+    const candidates = tasks.filter(t => t.status !== "Done").sort((a, b) => getPriority(a.priority).sort - getPriority(b.priority).sort);
+    if (candidates.length > 0) setFocusTask(candidates[0]);
+  };
+
+  if (!loaded) return <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: "#0a0a0f", color: "#fff" }}>Loading...</div>;
+
+  if (focusTask) return (
+    <FocusMode task={focusTask} level={level} gameState={gameState}
+      onComplete={() => { completeTask(focusTask.id); const next = tasks.filter(t => t.id !== focusTask.id && t.status !== "Done").sort((a, b) => getPriority(a.priority).sort - getPriority(b.priority).sort); setFocusTask(next[0] || null); }}
+      onSkip={() => { const next = tasks.filter(t => t.id !== focusTask.id && t.status !== "Done").sort((a, b) => getPriority(a.priority).sort - getPriority(b.priority).sort); setFocusTask(next[0] || null); }}
+      onExit={() => setFocusTask(null)} />
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0f", color: "#e0e0e0", fontFamily: "'Noto Sans JP', 'JetBrains Mono', sans-serif" }}>
+      {celebration && <CelebrationOverlay pts={celebration.pts} task={celebration.task} />}
+      <div style={{ padding: "16px 20px", borderBottom: "1px solid #1a1a2e", background: "linear-gradient(135deg, #0a0a0f, #12121f)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", flexWrap: "wrap", gap: "8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "22px" }}>{"\u26A1"}</span>
+            <h1 style={{ margin: 0, fontSize: "17px", fontWeight: 700, color: "#fff" }}>KEN OPS</h1>
+            <span style={{ fontSize: "10px", color: "#555", fontFamily: "JetBrains Mono" }}>v2.0</span>
+          </div>
+          <div style={{ display: "flex", gap: "3px" }}>
+            {[{ id: "dashboard", label: "\u{1F4CB}" }, { id: "focus", label: "\u{1F3AF}" }, { id: "kanban", label: "\u{1F5C2}" }, { id: "list", label: "\u{1F4CA}" }, { id: "gantt", label: "\u{1F4C5}" }, { id: "growth", label: "\u{1F680}" }].map(v => (
+              <button key={v.id} onClick={() => v.id === "focus" ? startFocus() : setView(v.id)} style={{
+                padding: "6px 10px", border: "none", borderRadius: "6px",
+                background: view === v.id ? "#1e1e3a" : "transparent",
+                color: view === v.id ? "#fff" : "#555", fontSize: "14px", cursor: "pointer",
+              }}>{v.label}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "12px", alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "12px" }}>{"\u{1F525}"}</span>
+            <span style={{ fontSize: "13px", fontWeight: 700, color: "#FF6B35", fontFamily: "JetBrains Mono" }}>{gameState.streak}</span>
+            <span style={{ fontSize: "10px", color: "#555" }}>日</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "12px" }}>{"\u2B50"}</span>
+            <span style={{ fontSize: "13px", fontWeight: 700, color: "#7B68EE", fontFamily: "JetBrains Mono" }}>Lv.{level.lv}</span>
+            <span style={{ fontSize: "10px", color: "#555" }}>{level.title}</span>
+          </div>
+          <div style={{ flex: 1, minWidth: "80px", height: "6px", borderRadius: "3px", background: "#1a1a2e", overflow: "hidden" }}>
+            <div style={{ height: "100%", borderRadius: "3px", background: "linear-gradient(90deg, #7B68EE, #FF6B35)", width: `${level.pctToNext}%`, transition: "width 0.5s" }} />
+          </div>
+          <span style={{ fontSize: "11px", color: "#555", fontFamily: "JetBrains Mono" }}>{gameState.totalPts} pt</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+            <span style={{ fontSize: "12px" }}>{"\u2705"}</span>
+            <span style={{ fontSize: "12px", color: gameState.completedToday >= 3 ? "#66BB6A" : "#888", fontFamily: "JetBrains Mono" }}>{gameState.completedToday}/3</span>
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: "10px 20px", display: "flex", gap: "5px", overflowX: "auto", borderBottom: "1px solid #111" }}>
+        <FilterBtn active={projectFilter === "all"} onClick={() => setProjectFilter("all")} color="#fff">ALL ({tasks.filter(t => t.status !== "Done").length})</FilterBtn>
+        {PROJECTS.map(p => {
+          const c = tasks.filter(t => t.project === p.id && t.status !== "Done").length;
+          return c > 0 ? <FilterBtn key={p.id} active={projectFilter === p.id} onClick={() => setProjectFilter(p.id)} color={p.color}>{p.emoji} {c}</FilterBtn> : null;
+        })}
+      </div>
+      <div style={{ padding: "16px 20px", paddingBottom: "80px" }}>
+        {view === "dashboard" && <DashboardView todayTasks={todayTasks} urgentTasks={urgentTasks} doingTasks={doingTasks} overdueTasks={overdueTasks} routines={routines} gameState={gameState} onUpdate={updateTask} onEdit={setEditingTask} onFocus={startFocus} />}
+        {view === "kanban" && <KanbanView statuses={STATUSES} filteredTasks={filteredTasks} sortedTasks={sortedTasks} onDragOver={(e) => e.preventDefault()} onDrop={handleDrop} onDragStart={handleDragStart} onUpdate={updateTask} onEdit={setEditingTask} />}
+        {view === "list" && <ListView sortedTasks={sortedTasks} sortBy={sortBy} setSortBy={setSortBy} onUpdate={updateTask} onEdit={setEditingTask} />}
+        {view === "gantt" && <GanttView tasks={filteredTasks} onEdit={setEditingTask} todayStr={today} />}
+        {view === "growth" && <GrowthView tasks={tasks} gameState={gameState} level={level} routines={routines} onShowRoutineModal={() => setShowRoutineModal(true)} />}
+      </div>
+      <div style={{ position: "fixed", bottom: "20px", right: "20px", display: "flex", gap: "8px" }}>
+        <button onClick={startFocus} style={{ width: "44px", height: "44px", borderRadius: "12px", border: "none", background: "#7B68EE", color: "#fff", fontSize: "18px", cursor: "pointer", boxShadow: "0 4px 16px rgba(123,104,238,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u{1F3AF}"}</button>
+        <button onClick={() => setShowAddModal(true)} style={{ width: "44px", height: "44px", borderRadius: "12px", border: "none", background: "linear-gradient(135deg, #FF6B35, #E71D36)", color: "#fff", fontSize: "20px", cursor: "pointer", boxShadow: "0 4px 16px rgba(255,107,53,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+      </div>
+      {showAddModal && <AddTaskModal onAdd={(t) => { addTask(t); setShowAddModal(false); }} onClose={() => setShowAddModal(false)} />}
+      {editingTask && <EditTaskModal task={editingTask} onSave={(u) => { updateTask(editingTask.id, u); setEditingTask(null); }} onDelete={() => { deleteTask(editingTask.id); setEditingTask(null); }} onClose={() => setEditingTask(null)} />}
+      {showRoutineModal && <RoutineModal routines={routines} onSave={setRoutines} onClose={() => setShowRoutineModal(false)} />}
+    </div>
+  );
+}
+
+// ─── CELEBRATION ───────────────────────────────────────────────
+function CelebrationOverlay({ pts, task }) {
+  const [particles, setParticles] = useState([]);
+  useEffect(() => {
+    const p = Array.from({ length: 30 }, (_, i) => ({
+      id: i, x: 50 + Math.random() * 40 - 20, y: 50,
+      dx: (Math.random() - 0.5) * 4, dy: -2 - Math.random() * 3,
+      color: ["#FF6B35", "#7B68EE", "#2EC4B6", "#E71D36", "#FFD700", "#66BB6A"][Math.floor(Math.random() * 6)],
+      size: 4 + Math.random() * 6,
+    }));
+    setParticles(p);
+  }, []);
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9999, pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)" }} />
+      {particles.map(p => (
+        <div key={p.id} style={{
+          position: "absolute", width: p.size, height: p.size, borderRadius: "50%", background: p.color,
+          left: `${p.x}%`, top: `${p.y}%`,
+          animation: `confetti-${p.id} 2s ease-out forwards`,
+        }} />
+      ))}
+      <style>{particles.map(p => `@keyframes confetti-${p.id} { 0% { transform: translate(0,0) scale(1); opacity:1; } 100% { transform: translate(${p.dx * 80}px, ${p.dy * 60 + 200}px) scale(0.3); opacity:0; } }`).join("\n")}</style>
+      <div style={{ position: "relative", zIndex: 1, textAlign: "center", animation: "popIn 0.4s ease-out" }}>
+        <div style={{ fontSize: "48px", marginBottom: "8px" }}>{"\u{1F389}"}</div>
+        <div style={{ fontSize: "28px", fontWeight: 700, color: "#FFD700", fontFamily: "JetBrains Mono" }}>+{pts} OPS</div>
+        <div style={{ fontSize: "14px", color: "#ddd", marginTop: "4px" }}>{task.title}</div>
+      </div>
+      <style>{`@keyframes popIn { 0% { transform: scale(0.3); opacity:0; } 50% { transform: scale(1.1); } 100% { transform: scale(1); opacity:1; } }`}</style>
+    </div>
+  );
+}
+
+// ─── FOCUS MODE ────────────────────────────────────────────────
+function FocusMode({ task, level, gameState, onComplete, onSkip, onExit }) {
+  const [timer, setTimer] = useState(25 * 60);
+  const [running, setRunning] = useState(false);
+  const [mode, setMode] = useState(25);
+  const intervalRef = useRef(null);
+  const project = getProject(task.project);
+  const priority = getPriority(task.priority);
+
+  useEffect(() => { setTimer(mode * 60); setRunning(false); }, [mode]);
+  useEffect(() => {
+    if (running && timer > 0) { intervalRef.current = setInterval(() => setTimer(p => p - 1), 1000); }
+    else { clearInterval(intervalRef.current); }
+    return () => clearInterval(intervalRef.current);
+  }, [running, timer]);
+
+  const mins = Math.floor(timer / 60);
+  const secs = timer % 60;
+  const pct = ((mode * 60 - timer) / (mode * 60)) * 100;
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans JP', 'JetBrains Mono', sans-serif", padding: "20px" }}>
+      <button onClick={onExit} style={{ position: "fixed", top: "16px", left: "16px", background: "none", border: "none", color: "#555", fontSize: "14px", cursor: "pointer", fontFamily: "inherit" }}>{"\u2190"} 戻る</button>
+      <div style={{ fontSize: "11px", color: "#555", marginBottom: "8px" }}>{"\u{1F3AF}"} フォーカスモード</div>
+      <div style={{ fontSize: "11px", color: project.color, marginBottom: "24px" }}>{project.emoji} {project.name} {"\u00B7"} {priority.emoji} {priority.label}</div>
+      <div style={{ fontSize: "20px", fontWeight: 700, color: "#fff", textAlign: "center", marginBottom: "32px", maxWidth: "400px", lineHeight: 1.4 }}>{task.title}</div>
+      <div style={{ position: "relative", width: "200px", height: "200px", marginBottom: "24px" }}>
+        <svg width="200" height="200" viewBox="0 0 200 200">
+          <circle cx="100" cy="100" r="90" fill="none" stroke="#1a1a2e" strokeWidth="6" />
+          <circle cx="100" cy="100" r="90" fill="none" stroke={project.color} strokeWidth="6"
+            strokeDasharray={`${2 * Math.PI * 90}`} strokeDashoffset={`${2 * Math.PI * 90 * (1 - pct / 100)}`}
+            strokeLinecap="round" transform="rotate(-90 100 100)" style={{ transition: "stroke-dashoffset 1s" }} />
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" }}>
+          <div style={{ fontSize: "40px", fontWeight: 700, color: "#fff", fontFamily: "JetBrains Mono" }}>{String(mins).padStart(2, "0")}:{String(secs).padStart(2, "0")}</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+        {[10, 15, 25].map(m => (
+          <button key={m} onClick={() => setMode(m)} style={{
+            padding: "6px 16px", border: mode === m ? `1px solid ${project.color}` : "1px solid #1e1e3a",
+            borderRadius: "20px", background: mode === m ? `${project.color}20` : "transparent",
+            color: mode === m ? project.color : "#555", fontSize: "12px", cursor: "pointer", fontFamily: "inherit",
+          }}>{m}分</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: "12px", marginBottom: "32px" }}>
+        <button onClick={() => setRunning(!running)} style={{
+          padding: "12px 32px", border: "none", borderRadius: "10px",
+          background: running ? "#333" : project.color, color: "#fff",
+          fontSize: "15px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+        }}>{running ? "\u23F8 一時停止" : "\u25B6 スタート"}</button>
+      </div>
+      <div style={{ display: "flex", gap: "12px" }}>
+        <button onClick={onComplete} style={{ padding: "10px 24px", border: "1px solid #66BB6A44", borderRadius: "8px", background: "#66BB6A20", color: "#66BB6A", fontSize: "13px", cursor: "pointer", fontFamily: "inherit" }}>{"\u2705"} 完了</button>
+        <button onClick={onSkip} style={{ padding: "10px 24px", border: "1px solid #1e1e3a", borderRadius: "8px", background: "transparent", color: "#555", fontSize: "13px", cursor: "pointer", fontFamily: "inherit" }}>{"\u23ED"} スキップ</button>
+      </div>
+      <div style={{ marginTop: "40px", textAlign: "center" }}>
+        <div style={{ fontSize: "11px", color: "#444" }}>Lv.{level.lv} {level.title} {"\u2192"} Lv.{level.next.lv} {level.next.title}</div>
+        <div style={{ width: "200px", height: "4px", borderRadius: "2px", background: "#1a1a2e", margin: "6px auto", overflow: "hidden" }}>
+          <div style={{ height: "100%", borderRadius: "2px", background: "#7B68EE", width: `${level.pctToNext}%` }} />
+        </div>
+        <div style={{ fontSize: "10px", color: "#333" }}>{gameState.totalPts} / {level.next.req} pt</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── DASHBOARD ─────────────────────────────────────────────────
+function DashboardView({ todayTasks, urgentTasks, doingTasks, overdueTasks, routines, gameState, onUpdate, onEdit, onFocus }) {
+  const today = todayStr();
+  const dayOfWeek = new Date().getDay();
+  const todayRoutines = routines.filter(r => r.freq === "daily" || (r.freq === "weekly_mon" && dayOfWeek === 1));
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "20px" }}>
+        {[{ label: "今日", count: todayTasks.length, color: "#FF6B35", e: "\u{1F4CC}" }, { label: "緊急", count: urgentTasks.length, color: "#E71D36", e: "\u{1F534}" }, { label: "進行中", count: doingTasks.length, color: "#2EC4B6", e: "\u26A1" }, { label: "期限切れ", count: overdueTasks.length, color: "#FF5252", e: "\u26A0\uFE0F" }].map((s, i) => (
+          <div key={i} style={{ padding: "12px", borderRadius: "10px", background: `${s.color}08`, border: `1px solid ${s.color}20` }}>
+            <div style={{ fontSize: "10px", color: "#666" }}>{s.e} {s.label}</div>
+            <div style={{ fontSize: "24px", fontWeight: 700, color: s.color, fontFamily: "JetBrains Mono" }}>{s.count}</div>
+          </div>
+        ))}
+      </div>
+      <button onClick={onFocus} style={{ width: "100%", padding: "14px", border: "1px solid #7B68EE44", borderRadius: "12px", background: "linear-gradient(135deg, #7B68EE15, #FF6B3515)", color: "#fff", fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginBottom: "20px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+        {"\u{1F3AF}"} フォーカスモードで始める — 今これ1個だけ
+      </button>
+      {todayRoutines.length > 0 && (
+        <Section title={"\u{1F504} 今日のルーティン"} color="#00B8D4">
+          {todayRoutines.map(r => (
+            <div key={r.id} style={{ padding: "10px 14px", borderRadius: "8px", background: "#111122", border: "1px solid #1a1a2e", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "10px", color: "#555" }}>{r.time}</span>
+                <span style={{ fontSize: "13px", color: "#ddd" }}>{r.title}</span>
+                <span style={{ fontSize: "10px", color: "#7B68EE", fontFamily: "JetBrains Mono" }}>+{r.pts}pt</span>
+              </div>
+            </div>
+          ))}
+        </Section>
+      )}
+      {todayTasks.length > 0 && <Section title={"\u{1F4CC} 今日やること"} color="#FF6B35">{todayTasks.map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</Section>}
+      {overdueTasks.length > 0 && <Section title={"\u26A0\uFE0F 期限切れ"} color="#FF5252">{overdueTasks.map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</Section>}
+      <Section title={"\u{1F534} 緊急"} color="#E71D36">{urgentTasks.filter(t => !todayTasks.includes(t) && !overdueTasks.includes(t)).map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</Section>
+      {doingTasks.length > 0 && <Section title={"\u26A1 進行中"} color="#2EC4B6">{doingTasks.map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</Section>}
+    </div>
+  );
+}
+
+// ─── KANBAN ────────────────────────────────────────────────────
+function KanbanView({ statuses, filteredTasks, sortedTasks, onDrop, onDragStart, onUpdate, onEdit }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "12px", minHeight: "60vh" }}>
+      {statuses.map(status => (
+        <div key={status} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); onDrop(e, status); }}
+          style={{ background: "#0d0d18", borderRadius: "10px", padding: "12px", border: "1px solid #1a1a2e" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 600, color: status === "To Do" ? "#888" : status === "Doing" ? "#2EC4B6" : "#66BB6A" }}>{status === "To Do" ? "\u{1F4CB}" : status === "Doing" ? "\u26A1" : "\u2705"} {status}</span>
+            <span style={{ fontSize: "10px", color: "#444", fontFamily: "JetBrains Mono", background: "#111", padding: "2px 6px", borderRadius: "8px" }}>{filteredTasks.filter(t => t.status === status).length}</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px", minHeight: "80px" }}>
+            {sortedTasks.filter(t => t.status === status).map(t => (
+              <div key={t.id} draggable onDragStart={(e) => onDragStart(e, t)} style={{ cursor: "grab" }}>
+                <TaskCard task={t} onUpdate={onUpdate} onEdit={onEdit} compact />
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── LIST ──────────────────────────────────────────────────────
+function ListView({ sortedTasks, sortBy, setSortBy, onUpdate, onEdit }) {
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "6px", marginBottom: "12px" }}>
+        {[{ id: "priority", label: "優先度順" }, { id: "deadline", label: "期限順" }].map(s => (
+          <button key={s.id} onClick={() => setSortBy(s.id)} style={{ padding: "5px 12px", border: sortBy === s.id ? "1px solid #333" : "1px solid #1a1a2e", borderRadius: "6px", background: sortBy === s.id ? "#1a1a2e" : "transparent", color: sortBy === s.id ? "#fff" : "#555", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" }}>{s.label}</button>
+        ))}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>{sortedTasks.map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</div>
+    </div>
+  );
+}
+
+// ─── GANTT ─────────────────────────────────────────────────────
+function GanttView({ tasks, onEdit, todayStr: today }) {
+  const scrollRef = useRef(null);
+  const [scale, setScale] = useState("month");
+  const twdl = tasks.filter(t => t.deadline && t.status !== "Done");
+  const noD = tasks.filter(t => !t.deadline && t.status !== "Done");
+  const byProj = useMemo(() => { const g = {}; PROJECTS.forEach(p => { const pt = twdl.filter(t => t.project === p.id).sort((a, b) => a.deadline.localeCompare(b.deadline)); if (pt.length) g[p.id] = pt; }); return g; }, [twdl]);
+  const cfg = useMemo(() => { let s, td, cw; if (scale === "week") { s = addDays(today, -3); td = 14; cw = 50; } else if (scale === "month") { s = addDays(today, -7); td = 45; cw = 28; } else { s = addDays(today, -14); td = 100; cw = 14; } return { s, td, cw, dates: Array.from({ length: td }, (_, i) => addDays(s, i)) }; }, [today, scale]);
+  useEffect(() => { if (scrollRef.current) { scrollRef.current.scrollLeft = Math.max(0, daysBetween(cfg.s, today) * cfg.cw - 120); } }, [scale]);
+  const rows = useMemo(() => { const r = []; Object.entries(byProj).forEach(([pid, pts]) => { r.push({ t: "h", p: getProject(pid) }); pts.forEach(t => r.push({ t: "t", task: t })); }); return r; }, [byProj]);
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "6px", marginBottom: "12px", alignItems: "center" }}>
+        <span style={{ fontSize: "10px", color: "#555" }}>範囲:</span>
+        {[{ id: "week", l: "2W" }, { id: "month", l: "6W" }, { id: "quarter", l: "3M+" }].map(s => (
+          <button key={s.id} onClick={() => setScale(s.id)} style={{ padding: "4px 10px", border: scale === s.id ? "1px solid #333" : "1px solid #1a1a2e", borderRadius: "5px", background: scale === s.id ? "#1a1a2e" : "transparent", color: scale === s.id ? "#fff" : "#555", fontSize: "10px", cursor: "pointer", fontFamily: "inherit" }}>{s.l}</button>
+        ))}
+      </div>
+      {rows.length === 0 ? <div style={{ padding: "40px", textAlign: "center", color: "#444", fontSize: "12px" }}>期限設定タスクなし</div> : (
+        <div style={{ display: "flex", border: "1px solid #1a1a2e", borderRadius: "10px", overflow: "hidden", background: "#0d0d18" }}>
+          <div style={{ width: 160, flexShrink: 0, borderRight: "1px solid #1a1a2e" }}>
+            <div style={{ height: "28px", borderBottom: "1px solid #1a1a2e", display: "flex", alignItems: "center", padding: "0 10px" }}><span style={{ fontSize: "9px", color: "#555" }}>タスク</span></div>
+            {rows.map((r, i) => (
+              <div key={i} onClick={() => r.t === "t" && onEdit(r.task)} style={{ height: r.t === "h" ? "24px" : "30px", display: "flex", alignItems: "center", padding: r.t === "h" ? "0 10px" : "0 10px 0 18px", borderBottom: "1px solid #0f0f1a", background: r.t === "h" ? `${r.p.color}08` : "transparent", cursor: r.t === "t" ? "pointer" : "default", overflow: "hidden" }}>
+                {r.t === "h" ? <span style={{ fontSize: "10px", fontWeight: 600, color: r.p.color }}>{r.p.emoji} {r.p.name}</span>
+                  : <span style={{ fontSize: "10px", color: "#bbb", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{getPriority(r.task.priority).emoji} {r.task.title}</span>}
+              </div>
+            ))}
+          </div>
+          <div ref={scrollRef} style={{ flex: 1, overflowX: "auto", position: "relative" }}>
+            <div style={{ width: cfg.td * cfg.cw, minWidth: "100%", position: "relative" }}>
+              <div style={{ height: "28px", display: "flex", borderBottom: "1px solid #1a1a2e", position: "sticky", top: 0, background: "#0d0d18", zIndex: 2 }}>
+                {cfg.dates.map((d, i) => { const dt = new Date(d + "T00:00:00"); const isT = d === today; const show = scale === "week" || (scale === "month" && (dt.getDate() % 5 === 1 || dt.getDate() === 1)) || (scale === "quarter" && dt.getDate() === 1); return (
+                  <div key={i} style={{ width: cfg.cw, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRight: "1px solid #0f0f1a", background: isT ? "#FF6B3515" : "transparent" }}>
+                    {show && <span style={{ fontSize: "8px", fontFamily: "JetBrains Mono", color: isT ? "#FF6B35" : "#444", fontWeight: isT ? 700 : 400 }}>{`${dt.getMonth() + 1}/${dt.getDate()}`}</span>}
+                  </div>); })}
+              </div>
+              {rows.map((r, ri) => {
+                const h = r.t === "h" ? 24 : 30;
+                if (r.t === "h") return <div key={ri} style={{ height: h, display: "flex", background: `${r.p.color}05`, borderBottom: "1px solid #0f0f1a" }}>{cfg.dates.map((d, i) => <div key={i} style={{ width: cfg.cw, flexShrink: 0, borderRight: "1px solid #08080f", background: d === today ? "#FF6B3508" : "transparent" }} />)}</div>;
+                const task = r.task; const proj = getProject(task.project); const dlOff = daysBetween(cfg.s, task.deadline); const dur = task.priority === "urgent" ? 1 : task.priority === "high" ? 2 : 3; const bS = Math.max(0, dlOff - dur); const bE = Math.min(cfg.td, dlOff + 1); const bW = Math.max(1, bE - bS); const isOD = task.deadline < today;
+                return (
+                  <div key={ri} onClick={() => onEdit(task)} style={{ height: h, display: "flex", position: "relative", borderBottom: "1px solid #0f0f1a", cursor: "pointer" }}>
+                    {cfg.dates.map((d, i) => <div key={i} style={{ width: cfg.cw, flexShrink: 0, borderRight: "1px solid #08080f", background: d === today ? "#FF6B3508" : "transparent" }} />)}
+                    {dlOff >= -dur && dlOff <= cfg.td && <div style={{ position: "absolute", left: bS * cfg.cw + 2, top: "50%", transform: "translateY(-50%)", width: bW * cfg.cw - 4, height: "16px", borderRadius: "3px", background: isOD ? `${proj.color}50` : `linear-gradient(90deg, ${proj.color}40, ${proj.color}90)`, border: `1px solid ${isOD ? "#FF5252" : proj.color}60` }} />}
+                  </div>);
+              })}
+              {(() => { const off = daysBetween(cfg.s, today); if (off < 0 || off >= cfg.td) return null; const totalH = rows.reduce((s, r) => s + (r.t === "h" ? 24 : 30), 0) + 28; return <div style={{ position: "absolute", left: off * cfg.cw + cfg.cw / 2, top: 0, height: totalH, width: "2px", background: "#FF6B35", opacity: 0.6, pointerEvents: "none", zIndex: 1 }} />; })()}
+            </div>
+          </div>
+        </div>
+      )}
+      {noD.length > 0 && <div style={{ marginTop: "16px" }}><Section title={"\u{1F4ED} 期限未設定"} color="#555">{noD.map(t => <div key={t.id} onClick={() => onEdit(t)} style={{ padding: "6px 12px", borderRadius: "6px", background: "#111122", border: "1px solid #1a1a2e", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px", fontSize: "11px", color: "#888" }}>{getPriority(t.priority).emoji} {t.title}<span style={{ marginLeft: "auto", fontSize: "9px", color: getProject(t.project).color }}>{getProject(t.project).name}</span></div>)}</Section></div>}
+    </div>
+  );
+}
+
+// ─── GROWTH TRACKER ────────────────────────────────────────────
+function GrowthView({ tasks, gameState, level, routines, onShowRoutineModal }) {
+  const doneTasks = tasks.filter(t => t.status === "Done").length;
+  const totalTasks = tasks.length;
+  const overallPct = Math.round(PROJECTS.reduce((s, p) => s + (p.done.length / Math.max(p.milestones.length, 1)), 0) / PROJECTS.length * 100);
+  const wp = gameState.weeklyPts || [];
+  const last7 = wp.slice(-7);
+  const maxPts = Math.max(...last7.map(w => w.pts), 1);
+
+  return (
+    <div>
+      <div style={{ border: "1px solid #1a1a2e", borderRadius: "12px", padding: "20px", marginBottom: "16px", textAlign: "center" }}>
+        <div style={{ fontSize: "11px", color: "#666" }}>NASDAQへの道</div>
+        <div style={{ fontSize: "32px", fontWeight: 700, color: "#7B68EE", fontFamily: "JetBrains Mono" }}>{overallPct}%</div>
+        <div style={{ height: "10px", borderRadius: "5px", background: "#1a1a2e", overflow: "hidden", margin: "10px 0" }}>
+          <div style={{ height: "100%", borderRadius: "5px", background: "linear-gradient(90deg, #2EC4B6, #7B68EE, #FF6B35)", width: `${overallPct}%`, transition: "width 1s" }} />
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: "9px", color: "#444" }}>
+          <span>MVP</span><span>PMF</span><span>Series A</span><span>Series B</span><span>IPO</span><span>NASDAQ</span>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "8px", marginBottom: "16px" }}>
+        {[{ n: gameState.streak, l: "ストリーク", c: "#FF6B35", u: "日" }, { n: `Lv.${level.lv}`, l: level.title, c: "#7B68EE" }, { n: gameState.totalPts, l: "OPS pt", c: "#2EC4B6" }, { n: `${doneTasks}/${totalTasks}`, l: "完了", c: "#66BB6A" }].map((s, i) => (
+          <div key={i} style={{ border: "1px solid #1a1a2e", borderRadius: "10px", padding: "10px", textAlign: "center" }}>
+            <div style={{ fontSize: "18px", fontWeight: 700, color: s.c, fontFamily: "JetBrains Mono" }}>{s.n}{s.u || ""}</div>
+            <div style={{ fontSize: "9px", color: "#555", marginTop: "2px" }}>{s.l}</div>
+          </div>
+        ))}
+      </div>
+      {last7.length > 0 && (
+        <div style={{ border: "1px solid #1a1a2e", borderRadius: "12px", padding: "16px", marginBottom: "16px" }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: "#ddd", marginBottom: "10px" }}>OPSポイント推移</div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: "4px", height: "60px" }}>
+            {last7.map((w, i) => (
+              <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: "2px" }}>
+                <span style={{ fontSize: "8px", color: "#555", fontFamily: "JetBrains Mono" }}>{w.pts}</span>
+                <div style={{ width: "100%", height: `${Math.max(4, (w.pts / maxPts) * 50)}px`, borderRadius: "2px", background: i === last7.length - 1 ? "#FF6B35" : "#7B68EE" }} />
+                <span style={{ fontSize: "8px", color: "#444" }}>{w.date.slice(5)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div style={{ fontSize: "13px", fontWeight: 500, color: "#ddd", marginBottom: "10px" }}>プロジェクト別クエスト</div>
+      {PROJECTS.filter(p => p.milestones.length > 0).map(p => {
+        const pct = Math.round((p.done.length / p.milestones.length) * 100);
+        if (pct === 0 && !tasks.some(t => t.project === p.id && t.status !== "Done")) return null;
+        return (
+          <div key={p.id} style={{ border: "1px solid #1a1a2e", borderRadius: "10px", padding: "14px", marginBottom: "8px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+              <span style={{ fontSize: "12px", fontWeight: 500, color: "#ddd" }}>{p.emoji} {p.name}</span>
+              <span style={{ fontSize: "16px", fontWeight: 700, color: p.color, fontFamily: "JetBrains Mono" }}>{pct}%</span>
+            </div>
+            <div style={{ height: "6px", borderRadius: "3px", background: "#1a1a2e", overflow: "hidden", marginBottom: "8px" }}>
+              <div style={{ height: "100%", borderRadius: "3px", background: p.color, width: `${pct}%` }} />
+            </div>
+            <div style={{ display: "flex", gap: "4px", flexWrap: "wrap" }}>
+              {p.milestones.map((m, i) => (
+                <span key={i} style={{ fontSize: "9px", padding: "2px 8px", borderRadius: "10px", border: p.done.includes(i) ? "none" : "1px solid #1a1a2e", background: p.done.includes(i) ? `${p.color}20` : "transparent", color: p.done.includes(i) ? p.color : "#555" }}>
+                  {p.done.includes(i) ? "\u2713 " : ""}{m}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "16px", marginBottom: "10px" }}>
+        <span style={{ fontSize: "13px", fontWeight: 500, color: "#ddd" }}>ルーティン設定</span>
+        <button onClick={onShowRoutineModal} style={{ padding: "4px 10px", border: "1px solid #1e1e3a", borderRadius: "6px", background: "transparent", color: "#888", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" }}>編集</button>
+      </div>
+      {routines.map(r => (
+        <div key={r.id} style={{ padding: "8px 12px", borderRadius: "6px", background: "#111122", border: "1px solid #1a1a2e", marginBottom: "4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "10px", color: "#555" }}>{r.freq === "daily" ? "毎日" : "毎週月"} {r.time}</span>
+            <span style={{ fontSize: "12px", color: "#ddd" }}>{r.title}</span>
+          </div>
+          <span style={{ fontSize: "10px", color: "#7B68EE", fontFamily: "JetBrains Mono" }}>+{r.pts}pt</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── SHARED COMPONENTS ─────────────────────────────────────────
+function FilterBtn({ active, onClick, color, children }) {
+  return <button onClick={onClick} style={{ padding: "3px 10px", border: active ? `1px solid ${color}44` : "1px solid transparent", borderRadius: "16px", background: active ? `${color}15` : "transparent", color: active ? color : "#555", fontSize: "11px", cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>{children}</button>;
+}
+function Section({ title, color, children }) {
+  return <div style={{ marginBottom: "20px" }}><h3 style={{ fontSize: "13px", fontWeight: 600, color, marginBottom: "10px" }}>{title}</h3><div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>{children}</div></div>;
+}
+function TaskCard({ task, onUpdate, onEdit, compact }) {
+  const project = getProject(task.project); const priority = getPriority(task.priority); const today = todayStr(); const isOD = task.deadline && task.deadline < today && task.status !== "Done";
+  return (
+    <div onClick={() => onEdit(task)} style={{ padding: compact ? "8px 10px" : "10px 14px", borderRadius: "8px", background: task.status === "Done" ? "#0a0a12" : "#111122", border: isOD ? "1px solid #FF525244" : "1px solid #1a1a2e", cursor: "pointer", opacity: task.status === "Done" ? 0.5 : 1 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
+        <button onClick={(e) => { e.stopPropagation(); onUpdate(task.id, { status: task.status === "Done" ? "To Do" : "Done" }); }} style={{ width: "16px", height: "16px", borderRadius: "4px", border: task.status === "Done" ? "none" : `2px solid ${project.color}44`, background: task.status === "Done" ? "#66BB6A" : "transparent", cursor: "pointer", flexShrink: 0, marginTop: "1px", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: "9px" }}>{task.status === "Done" && "\u2713"}</button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: "12px", fontWeight: 500, color: task.status === "Done" ? "#444" : "#ddd", textDecoration: task.status === "Done" ? "line-through" : "none" }}>{task.title}</div>
+          <div style={{ display: "flex", gap: "6px", marginTop: "4px", flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: "9px", padding: "1px 6px", borderRadius: "8px", background: `${project.color}15`, color: project.color }}>{project.emoji} {project.name}</span>
+            <span style={{ fontSize: "9px", color: "#555" }}>{priority.emoji}</span>
+            {!compact && <span style={{ fontSize: "9px", color: "#7B68EE", fontFamily: "JetBrains Mono" }}>+{priority.pts}pt</span>}
+            {task.deadline && <span style={{ fontSize: "9px", color: isOD ? "#FF5252" : "#555", fontFamily: "JetBrains Mono" }}>{isOD ? "\u26A0\uFE0F" : "\u{1F4C5}"}{task.deadline.slice(5)}</span>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+function FieldLabel({ children }) { return <label style={{ fontSize: "10px", color: "#666", marginBottom: "3px", display: "block" }}>{children}</label>; }
+function ModalOverlay({ children, onClose }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "16px" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#14142a", borderRadius: "14px", padding: "20px", width: "100%", maxWidth: "400px", border: "1px solid #1e1e3a", maxHeight: "85vh", overflowY: "auto" }}>{children}</div>
+    </div>
+  );
+}
+
+// ─── MODALS ────────────────────────────────────────────────────
+function AddTaskModal({ onAdd, onClose }) {
+  const [title, setTitle] = useState(""); const [project, setProject] = useState("kai"); const [priority, setPriority] = useState("medium"); const [deadline, setDeadline] = useState(""); const [note, setNote] = useState("");
+  return (
+    <ModalOverlay onClose={onClose}>
+      <h3 style={{ margin: "0 0 16px 0", fontSize: "15px", color: "#fff" }}>{"\u2795"} タスク追加</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <div><FieldLabel>タスク名</FieldLabel><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="何をやる？" style={inputStyle} autoFocus /></div>
+        <div><FieldLabel>プロジェクト</FieldLabel><select value={project} onChange={(e) => setProject(e.target.value)} style={inputStyle}>{PROJECTS.map(p => <option key={p.id} value={p.id}>{p.emoji} {p.name}</option>)}</select></div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ flex: 1 }}><FieldLabel>優先度</FieldLabel><select value={priority} onChange={(e) => setPriority(e.target.value)} style={inputStyle}>{PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.emoji} {p.label} (+{p.pts}pt)</option>)}</select></div>
+          <div style={{ flex: 1 }}><FieldLabel>期限</FieldLabel><input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} style={inputStyle} /></div>
+        </div>
+        <div><FieldLabel>メモ</FieldLabel><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="補足" style={inputStyle} /></div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={onClose} style={{ flex: 1, padding: "10px", border: "1px solid #1e1e3a", borderRadius: "8px", background: "transparent", color: "#888", cursor: "pointer", fontSize: "12px", fontFamily: "inherit" }}>キャンセル</button>
+          <button onClick={() => { if (title.trim()) onAdd({ title, project, priority, deadline, note, status: "To Do" }); }} style={{ flex: 1, padding: "10px", border: "none", borderRadius: "8px", background: "linear-gradient(135deg, #FF6B35, #E71D36)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 600, fontFamily: "inherit" }}>追加</button>
+        </div>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+function EditTaskModal({ task, onSave, onDelete, onClose }) {
+  const [title, setTitle] = useState(task.title); const [project, setProject] = useState(task.project); const [priority, setPriority] = useState(task.priority); const [deadline, setDeadline] = useState(task.deadline); const [status, setStatus] = useState(task.status); const [note, setNote] = useState(task.note);
+  return (
+    <ModalOverlay onClose={onClose}>
+      <h3 style={{ margin: "0 0 16px 0", fontSize: "15px", color: "#fff" }}>{"\u270F\uFE0F"} 編集</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <div><FieldLabel>タスク名</FieldLabel><input value={title} onChange={(e) => setTitle(e.target.value)} style={inputStyle} /></div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ flex: 1 }}><FieldLabel>プロジェクト</FieldLabel><select value={project} onChange={(e) => setProject(e.target.value)} style={inputStyle}>{PROJECTS.map(p => <option key={p.id} value={p.id}>{p.emoji} {p.name}</option>)}</select></div>
+          <div style={{ flex: 1 }}><FieldLabel>ステータス</FieldLabel><select value={status} onChange={(e) => setStatus(e.target.value)} style={inputStyle}>{STATUSES.map(s => <option key={s} value={s}>{s}</option>)}</select></div>
+        </div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <div style={{ flex: 1 }}><FieldLabel>優先度</FieldLabel><select value={priority} onChange={(e) => setPriority(e.target.value)} style={inputStyle}>{PRIORITIES.map(p => <option key={p.id} value={p.id}>{p.emoji} {p.label}</option>)}</select></div>
+          <div style={{ flex: 1 }}><FieldLabel>期限</FieldLabel><input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} style={inputStyle} /></div>
+        </div>
+        <div><FieldLabel>メモ</FieldLabel><input value={note} onChange={(e) => setNote(e.target.value)} style={inputStyle} /></div>
+        <div style={{ display: "flex", gap: "8px" }}>
+          <button onClick={() => { if (confirm("削除しますか？")) onDelete(); }} style={{ padding: "10px 14px", border: "1px solid #FF525244", borderRadius: "8px", background: "transparent", color: "#FF5252", cursor: "pointer", fontSize: "12px", fontFamily: "inherit" }}>{"\u{1F5D1}"}</button>
+          <button onClick={onClose} style={{ flex: 1, padding: "10px", border: "1px solid #1e1e3a", borderRadius: "8px", background: "transparent", color: "#888", cursor: "pointer", fontSize: "12px", fontFamily: "inherit" }}>閉じる</button>
+          <button onClick={() => onSave({ title, project, priority, deadline, status, note })} style={{ flex: 1, padding: "10px", border: "none", borderRadius: "8px", background: "linear-gradient(135deg, #2EC4B6, #00B8D4)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 600, fontFamily: "inherit" }}>保存</button>
+        </div>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+function RoutineModal({ routines, onSave, onClose }) {
+  const [list, setList] = useState([...routines]);
+  const [newTitle, setNewTitle] = useState(""); const [newFreq, setNewFreq] = useState("daily"); const [newTime, setNewTime] = useState("09:00"); const [newPts, setNewPts] = useState(10);
+  const add = () => { if (!newTitle.trim()) return; setList(prev => [...prev, { id: `r${Date.now()}`, title: newTitle, freq: newFreq, time: newTime, pts: newPts, project: "self" }]); setNewTitle(""); };
+  const remove = (id) => setList(prev => prev.filter(r => r.id !== id));
+  return (
+    <ModalOverlay onClose={onClose}>
+      <h3 style={{ margin: "0 0 16px 0", fontSize: "15px", color: "#fff" }}>{"\u{1F504}"} ルーティン設定</h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px", marginBottom: "16px" }}>
+        {list.map(r => (
+          <div key={r.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 10px", background: "#0d0d18", borderRadius: "6px" }}>
+            <div style={{ fontSize: "12px", color: "#ddd" }}>{r.freq === "daily" ? "毎日" : "毎週月"} {r.time} — {r.title} (+{r.pts}pt)</div>
+            <button onClick={() => remove(r.id)} style={{ background: "none", border: "none", color: "#FF5252", cursor: "pointer", fontSize: "12px" }}>{"\u2715"}</button>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: "6px", marginBottom: "12px", flexWrap: "wrap" }}>
+        <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="新しいルーティン" style={{ ...inputStyle, flex: 1, minWidth: "120px" }} />
+        <select value={newFreq} onChange={(e) => setNewFreq(e.target.value)} style={{ ...inputStyle, width: "80px" }}>
+          <option value="daily">毎日</option><option value="weekly_mon">毎週月</option>
+        </select>
+        <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} style={{ ...inputStyle, width: "80px" }} />
+        <button onClick={add} style={{ padding: "8px 14px", border: "none", borderRadius: "8px", background: "#2EC4B6", color: "#fff", cursor: "pointer", fontSize: "12px", fontFamily: "inherit" }}>追加</button>
+      </div>
+      <div style={{ display: "flex", gap: "8px" }}>
+        <button onClick={onClose} style={{ flex: 1, padding: "10px", border: "1px solid #1e1e3a", borderRadius: "8px", background: "transparent", color: "#888", cursor: "pointer", fontSize: "12px", fontFamily: "inherit" }}>キャンセル</button>
+        <button onClick={() => { onSave(list); onClose(); }} style={{ flex: 1, padding: "10px", border: "none", borderRadius: "8px", background: "linear-gradient(135deg, #7B68EE, #FF6B35)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 600, fontFamily: "inherit" }}>保存</button>
+      </div>
+    </ModalOverlay>
+  );
+}
+
+// ─── RENDER ────────────────────────────────────────────────────
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
