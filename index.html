@@ -125,7 +125,7 @@ const storage = {
 
 // ─── GOOGLE API CONFIG ─────────────────────────────────────────
 const GOOGLE_CLIENT_ID = "40290120493-m3rh2ftv68543kmbpusq8s9u4cqomh9c.apps.googleusercontent.com";
-const SCOPES = "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks";
+const SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
 
 let tokenClient = null;
 let gapiInited = false;
@@ -138,7 +138,6 @@ function initGapi() {
       try {
         await gapi.client.init({});
         await gapi.client.load("calendar", "v3");
-        await gapi.client.load("tasks", "v1");
         gapiInited = true;
         resolve(true);
       } catch (e) { console.error("gapi init error", e); resolve(false); }
@@ -172,42 +171,6 @@ async function fetchCalendarEvents() {
   } catch (e) { console.error("Calendar fetch error", e); return []; }
 }
 
-async function fetchGoogleTaskLists() {
-  try {
-    const res = await gapi.client.tasks.tasklists.list({ maxResults: 10 });
-    return res.result.items || [];
-  } catch (e) { console.error("Task lists fetch error", e); return []; }
-}
-
-async function fetchGoogleTasks(taskListId) {
-  try {
-    const res = await gapi.client.tasks.tasks.list({ tasklist: taskListId, maxResults: 100, showCompleted: true });
-    return res.result.items || [];
-  } catch (e) { console.error("Tasks fetch error", e); return []; }
-}
-
-async function createGoogleTask(taskListId, title, notes, due) {
-  try {
-    const body = { title };
-    if (notes) body.notes = notes;
-    if (due) body.due = new Date(due + "T00:00:00").toISOString();
-    const res = await gapi.client.tasks.tasks.insert({ tasklist: taskListId, resource: body });
-    return res.result;
-  } catch (e) { console.error("Create task error", e); return null; }
-}
-
-async function completeGoogleTask(taskListId, taskId) {
-  try {
-    await gapi.client.tasks.tasks.patch({ tasklist: taskListId, task: taskId, resource: { status: "completed" } });
-  } catch (e) { console.error("Complete task error", e); }
-}
-
-async function deleteGoogleTask(taskListId, taskId) {
-  try {
-    await gapi.client.tasks.tasks.delete({ tasklist: taskListId, task: taskId });
-  } catch (e) { console.error("Delete task error", e); }
-}
-
 // ─── MAIN APP ──────────────────────────────────────────────────
 function App() {
   const [tasks, setTasks] = useState([]);
@@ -227,11 +190,7 @@ function App() {
   // Google state
   const [googleSignedIn, setGoogleSignedIn] = useState(false);
   const [calendarEvents, setCalendarEvents] = useState([]);
-  const [googleTaskLists, setGoogleTaskLists] = useState([]);
-  const [googleTasks, setGoogleTasks] = useState([]);
-  const [selectedTaskList, setSelectedTaskList] = useState(null);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [syncMessage, setSyncMessage] = useState(null);
 
   // Init Google APIs
   useEffect(() => {
@@ -247,7 +206,7 @@ function App() {
         if (resp.error) { console.error(resp); return; }
         setGoogleSignedIn(true);
         gapi.client.setToken({ access_token: resp.access_token });
-        refreshGoogleData();
+        refreshCalendar();
       });
     };
     waitAndInit();
@@ -266,78 +225,14 @@ function App() {
     }
     setGoogleSignedIn(false);
     setCalendarEvents([]);
-    setGoogleTasks([]);
-    setGoogleTaskLists([]);
-    setSelectedTaskList(null);
   };
 
-  const refreshGoogleData = async () => {
+  const refreshCalendar = async () => {
     setGoogleLoading(true);
     try {
-      const [events, taskLists] = await Promise.all([fetchCalendarEvents(), fetchGoogleTaskLists()]);
+      const events = await fetchCalendarEvents();
       setCalendarEvents(events);
-      setGoogleTaskLists(taskLists);
-      if (taskLists.length > 0) {
-        const listId = taskLists[0].id;
-        setSelectedTaskList(listId);
-        const tasks = await fetchGoogleTasks(listId);
-        setGoogleTasks(tasks);
-      }
     } catch (e) { console.error(e); }
-    setGoogleLoading(false);
-  };
-
-  const handleTaskListChange = async (listId) => {
-    setSelectedTaskList(listId);
-    setGoogleLoading(true);
-    const tasks = await fetchGoogleTasks(listId);
-    setGoogleTasks(tasks);
-    setGoogleLoading(false);
-  };
-
-  const pushTaskToGoogle = async (task) => {
-    if (!selectedTaskList) return;
-    const project = getProject(task.project);
-    const notes = `[${project.emoji} ${project.name}] ${task.note || ""}`.trim();
-    const result = await createGoogleTask(selectedTaskList, task.title, notes, task.deadline);
-    if (result) {
-      setSyncMessage(`"${task.title}" をGoogleタスクに追加しました`);
-      setTimeout(() => setSyncMessage(null), 2500);
-      const tasks = await fetchGoogleTasks(selectedTaskList);
-      setGoogleTasks(tasks);
-    }
-  };
-
-  const pushAllToGoogle = async () => {
-    if (!selectedTaskList) return;
-    setGoogleLoading(true);
-    const incompleteTasks = tasks.filter(t => t.status !== "Done");
-    for (const task of incompleteTasks) {
-      const project = getProject(task.project);
-      const notes = `[${project.emoji} ${project.name}] ${task.note || ""}`.trim();
-      await createGoogleTask(selectedTaskList, task.title, notes, task.deadline);
-    }
-    setSyncMessage(`${incompleteTasks.length}件のタスクをGoogleに同期しました`);
-    setTimeout(() => setSyncMessage(null), 3000);
-    const updated = await fetchGoogleTasks(selectedTaskList);
-    setGoogleTasks(updated);
-    setGoogleLoading(false);
-  };
-
-  const importFromGoogle = async () => {
-    if (!googleTasks.length) return;
-    setGoogleLoading(true);
-    let imported = 0;
-    for (const gt of googleTasks) {
-      if (gt.status === "completed") continue;
-      const exists = tasks.some(t => t.title === gt.title);
-      if (exists) continue;
-      const deadline = gt.due ? gt.due.split("T")[0] : "";
-      addTask({ title: gt.title, project: "self", priority: "medium", deadline, note: gt.notes || "", status: "To Do" });
-      imported++;
-    }
-    setSyncMessage(`${imported}件のタスクをGoogleからインポートしました`);
-    setTimeout(() => setSyncMessage(null), 3000);
     setGoogleLoading(false);
   };
 
@@ -447,7 +342,7 @@ function App() {
             <span style={{ fontSize: "10px", color: "#555", fontFamily: "JetBrains Mono" }}>v2.0</span>
           </div>
           <div style={{ display: "flex", gap: "3px" }}>
-            {[{ id: "dashboard", label: "\u{1F4CB}" }, { id: "focus", label: "\u{1F3AF}" }, { id: "kanban", label: "\u{1F5C2}" }, { id: "list", label: "\u{1F4CA}" }, { id: "gantt", label: "\u{1F4C5}" }, { id: "growth", label: "\u{1F680}" }, { id: "google", label: "\u{1F310}" }].map(v => (
+            {[{ id: "dashboard", label: "\u{1F4CB}" }, { id: "focus", label: "\u{1F3AF}" }, { id: "kanban", label: "\u{1F5C2}" }, { id: "list", label: "\u{1F4CA}" }, { id: "gantt", label: "\u{1F4C5}" }, { id: "growth", label: "\u{1F680}" }].map(v => (
               <button key={v.id} onClick={() => v.id === "focus" ? startFocus() : setView(v.id)} style={{
                 padding: "6px 10px", border: "none", borderRadius: "6px",
                 background: view === v.id ? "#1e1e3a" : "transparent",
@@ -485,33 +380,12 @@ function App() {
         })}
       </div>
       <div style={{ padding: "16px 20px", paddingBottom: "80px" }}>
-        {view === "dashboard" && <DashboardView todayTasks={todayTasks} urgentTasks={urgentTasks} doingTasks={doingTasks} overdueTasks={overdueTasks} routines={routines} gameState={gameState} onUpdate={updateTask} onEdit={setEditingTask} onFocus={startFocus} calendarEvents={calendarEvents} googleSignedIn={googleSignedIn} />}
+        {view === "dashboard" && <DashboardView todayTasks={todayTasks} urgentTasks={urgentTasks} doingTasks={doingTasks} overdueTasks={overdueTasks} routines={routines} gameState={gameState} onUpdate={updateTask} onEdit={setEditingTask} onFocus={startFocus} calendarEvents={calendarEvents} googleSignedIn={googleSignedIn} onGoogleSignIn={handleGoogleSignIn} onGoogleSignOut={handleGoogleSignOut} onRefreshCalendar={refreshCalendar} googleLoading={googleLoading} />}
         {view === "kanban" && <KanbanView statuses={STATUSES} filteredTasks={filteredTasks} sortedTasks={sortedTasks} onDragOver={(e) => e.preventDefault()} onDrop={handleDrop} onDragStart={handleDragStart} onUpdate={updateTask} onEdit={setEditingTask} />}
         {view === "list" && <ListView sortedTasks={sortedTasks} sortBy={sortBy} setSortBy={setSortBy} onUpdate={updateTask} onEdit={setEditingTask} />}
         {view === "gantt" && <GanttView tasks={filteredTasks} onEdit={setEditingTask} todayStr={today} />}
         {view === "growth" && <GrowthView tasks={tasks} gameState={gameState} level={level} routines={routines} onShowRoutineModal={() => setShowRoutineModal(true)} />}
-        {view === "google" && <GoogleView
-          signedIn={googleSignedIn}
-          onSignIn={handleGoogleSignIn}
-          onSignOut={handleGoogleSignOut}
-          calendarEvents={calendarEvents}
-          googleTaskLists={googleTaskLists}
-          googleTasks={googleTasks}
-          selectedTaskList={selectedTaskList}
-          onTaskListChange={handleTaskListChange}
-          onRefresh={refreshGoogleData}
-          onPushAll={pushAllToGoogle}
-          onImport={importFromGoogle}
-          loading={googleLoading}
-          localTasks={tasks}
-          onPushTask={pushTaskToGoogle}
-        />}
       </div>
-      {syncMessage && (
-        <div style={{ position: "fixed", top: "80px", left: "50%", transform: "translateX(-50%)", background: "#2EC4B6", color: "#fff", padding: "10px 20px", borderRadius: "10px", fontSize: "13px", fontWeight: 600, zIndex: 9999, boxShadow: "0 4px 16px rgba(0,0,0,0.3)", animation: "popIn 0.3s ease-out" }}>
-          {syncMessage}
-        </div>
-      )}
       <div style={{ position: "fixed", bottom: "20px", right: "20px", display: "flex", gap: "8px" }}>
         <button onClick={startFocus} style={{ width: "44px", height: "44px", borderRadius: "12px", border: "none", background: "#7B68EE", color: "#fff", fontSize: "18px", cursor: "pointer", boxShadow: "0 4px 16px rgba(123,104,238,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>{"\u{1F3AF}"}</button>
         <button onClick={() => setShowAddModal(true)} style={{ width: "44px", height: "44px", borderRadius: "12px", border: "none", background: "linear-gradient(135deg, #FF6B35, #E71D36)", color: "#fff", fontSize: "20px", cursor: "pointer", boxShadow: "0 4px 16px rgba(255,107,53,0.3)", display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
@@ -625,10 +499,12 @@ function FocusMode({ task, level, gameState, onComplete, onSkip, onExit }) {
 }
 
 // ─── DASHBOARD ─────────────────────────────────────────────────
-function DashboardView({ todayTasks, urgentTasks, doingTasks, overdueTasks, routines, gameState, onUpdate, onEdit, onFocus, calendarEvents, googleSignedIn }) {
+function DashboardView({ todayTasks, urgentTasks, doingTasks, overdueTasks, routines, gameState, onUpdate, onEdit, onFocus, calendarEvents, googleSignedIn, onGoogleSignIn, onGoogleSignOut, onRefreshCalendar, googleLoading }) {
   const today = todayStr();
   const dayOfWeek = new Date().getDay();
   const todayRoutines = routines.filter(r => r.freq === "daily" || (r.freq === "weekly_mon" && dayOfWeek === 1));
+  const todayEvts = calendarEvents.filter(e => (e.start?.dateTime || e.start?.date || "").startsWith(today));
+  const upcomingEvts = calendarEvents.filter(e => !(e.start?.dateTime || e.start?.date || "").startsWith(today));
   return (
     <div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "10px", marginBottom: "20px" }}>
@@ -642,6 +518,69 @@ function DashboardView({ todayTasks, urgentTasks, doingTasks, overdueTasks, rout
       <button onClick={onFocus} style={{ width: "100%", padding: "14px", border: "1px solid #7B68EE44", borderRadius: "12px", background: "linear-gradient(135deg, #7B68EE15, #FF6B3515)", color: "#fff", fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", marginBottom: "20px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
         {"\u{1F3AF}"} フォーカスモードで始める — 今これ1個だけ
       </button>
+
+      {/* Google Calendar */}
+      {!googleSignedIn ? (
+        <button onClick={onGoogleSignIn} style={{ width: "100%", padding: "12px", border: "1px solid #4285F444", borderRadius: "10px", background: "#4285F410", color: "#4285F4", fontSize: "12px", fontWeight: 500, cursor: "pointer", fontFamily: "inherit", marginBottom: "20px", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px" }}>
+          {"\u{1F4C5}"} Googleカレンダーを連携する
+        </button>
+      ) : (
+        <div style={{ marginBottom: "20px" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px" }}>
+            <h3 style={{ fontSize: "13px", fontWeight: 600, color: "#4285F4" }}>{"\u{1F4C5}"} Googleカレンダー {googleLoading && <span style={{ fontSize: "10px", color: "#666" }}>更新中...</span>}</h3>
+            <div style={{ display: "flex", gap: "4px" }}>
+              <button onClick={onRefreshCalendar} style={{ padding: "3px 8px", border: "1px solid #1e1e3a", borderRadius: "4px", background: "transparent", color: "#666", fontSize: "10px", cursor: "pointer", fontFamily: "inherit" }}>{"\u{1F504}"}</button>
+              <button onClick={onGoogleSignOut} style={{ padding: "3px 8px", border: "1px solid #FF525233", borderRadius: "4px", background: "transparent", color: "#FF5252", fontSize: "10px", cursor: "pointer", fontFamily: "inherit" }}>解除</button>
+            </div>
+          </div>
+          {todayEvts.length > 0 && (
+            <div style={{ marginBottom: "12px" }}>
+              <div style={{ fontSize: "10px", color: "#888", marginBottom: "6px" }}>今日</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                {todayEvts.map((e, i) => {
+                  const startTime = e.start?.dateTime ? new Date(e.start.dateTime).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "終日";
+                  const endTime = e.end?.dateTime ? new Date(e.end.dateTime).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "";
+                  return (
+                    <div key={i} style={{ padding: "8px 12px", borderRadius: "8px", background: "#111122", border: "1px solid #1a1a2e", display: "flex", alignItems: "center", gap: "10px" }}>
+                      <div style={{ width: "3px", height: "28px", borderRadius: "2px", background: "#4285F4", flexShrink: 0 }} />
+                      <div>
+                        <div style={{ fontSize: "12px", color: "#ddd" }}>{e.summary || "(タイトルなし)"}</div>
+                        <div style={{ fontSize: "9px", color: "#888", fontFamily: "JetBrains Mono" }}>{startTime}{endTime ? ` - ${endTime}` : ""}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {todayEvts.length === 0 && upcomingEvts.length === 0 && (
+            <div style={{ padding: "12px", fontSize: "11px", color: "#555", textAlign: "center" }}>今週の予定はありません</div>
+          )}
+          {upcomingEvts.length > 0 && (
+            <div>
+              <div style={{ fontSize: "10px", color: "#888", marginBottom: "6px" }}>今後の予定</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                {upcomingEvts.slice(0, 5).map((e, i) => {
+                  const startDate = e.start?.dateTime ? new Date(e.start.dateTime) : new Date((e.start?.date || today) + "T00:00:00");
+                  const dateStr = `${startDate.getMonth() + 1}/${startDate.getDate()}`;
+                  const timeStr = e.start?.dateTime ? startDate.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "終日";
+                  return (
+                    <div key={i} style={{ padding: "6px 12px", borderRadius: "6px", background: "#0d0d18", border: "1px solid #1a1a2e", display: "flex", alignItems: "center", gap: "10px" }}>
+                      <span style={{ fontSize: "10px", color: "#34A853", fontFamily: "JetBrains Mono", minWidth: "35px" }}>{dateStr}</span>
+                      <div>
+                        <div style={{ fontSize: "11px", color: "#bbb" }}>{e.summary || "(タイトルなし)"}</div>
+                        <div style={{ fontSize: "8px", color: "#666", fontFamily: "JetBrains Mono" }}>{timeStr}</div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {upcomingEvts.length > 5 && <div style={{ fontSize: "10px", color: "#555", textAlign: "center", padding: "4px" }}>他 {upcomingEvts.length - 5} 件</div>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {todayRoutines.length > 0 && (
         <Section title={"\u{1F504} 今日のルーティン"} color="#00B8D4">
           {todayRoutines.map(r => (
@@ -655,28 +594,6 @@ function DashboardView({ todayTasks, urgentTasks, doingTasks, overdueTasks, rout
           ))}
         </Section>
       )}
-      {/* Google Calendar events in dashboard */}
-      {googleSignedIn && calendarEvents.length > 0 && (() => {
-        const today = todayStr();
-        const todayEvts = calendarEvents.filter(e => (e.start?.dateTime || e.start?.date || "").startsWith(today));
-        return todayEvts.length > 0 ? (
-          <Section title={"\u{1F4C5} 今日のGoogleカレンダー"} color="#4285F4">
-            {todayEvts.map((e, i) => {
-              const startTime = e.start?.dateTime ? new Date(e.start.dateTime).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "終日";
-              const endTime = e.end?.dateTime ? new Date(e.end.dateTime).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "";
-              return (
-                <div key={i} style={{ padding: "8px 14px", borderRadius: "8px", background: "#111122", border: "1px solid #1a1a2e", display: "flex", alignItems: "center", gap: "10px" }}>
-                  <div style={{ width: "3px", height: "28px", borderRadius: "2px", background: "#4285F4", flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: "12px", color: "#ddd" }}>{e.summary || "(タイトルなし)"}</div>
-                    <div style={{ fontSize: "9px", color: "#888", fontFamily: "JetBrains Mono" }}>{startTime}{endTime ? ` - ${endTime}` : ""}</div>
-                  </div>
-                </div>
-              );
-            })}
-          </Section>
-        ) : null;
-      })()}
       {todayTasks.length > 0 && <Section title={"\u{1F4CC} 今日やること"} color="#FF6B35">{todayTasks.map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</Section>}
       {overdueTasks.length > 0 && <Section title={"\u26A0\uFE0F 期限切れ"} color="#FF5252">{overdueTasks.map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</Section>}
       <Section title={"\u{1F534} 緊急"} color="#E71D36">{urgentTasks.filter(t => !todayTasks.includes(t) && !overdueTasks.includes(t)).map(t => <TaskCard key={t.id} task={t} onUpdate={onUpdate} onEdit={onEdit} />)}</Section>
@@ -976,166 +893,6 @@ function RoutineModal({ routines, onSave, onClose }) {
         <button onClick={() => { onSave(list); onClose(); }} style={{ flex: 1, padding: "10px", border: "none", borderRadius: "8px", background: "linear-gradient(135deg, #7B68EE, #FF6B35)", color: "#fff", cursor: "pointer", fontSize: "12px", fontWeight: 600, fontFamily: "inherit" }}>保存</button>
       </div>
     </ModalOverlay>
-  );
-}
-
-// ─── GOOGLE VIEW ──────────────────────────────────────────────
-function GoogleView({ signedIn, onSignIn, onSignOut, calendarEvents, googleTaskLists, googleTasks, selectedTaskList, onTaskListChange, onRefresh, onPushAll, onImport, loading, localTasks, onPushTask }) {
-  const [showPushPicker, setShowPushPicker] = useState(false);
-
-  if (!signedIn) {
-    return (
-      <div style={{ textAlign: "center", padding: "40px 20px" }}>
-        <div style={{ fontSize: "48px", marginBottom: "16px" }}>{"\u{1F310}"}</div>
-        <h2 style={{ fontSize: "18px", color: "#fff", marginBottom: "8px" }}>Google連携</h2>
-        <p style={{ fontSize: "12px", color: "#666", marginBottom: "24px", lineHeight: 1.6 }}>
-          Googleカレンダーの予定を表示し、<br/>Googleタスクと同期できます
-        </p>
-        <button onClick={onSignIn} style={{
-          padding: "12px 32px", border: "none", borderRadius: "10px",
-          background: "linear-gradient(135deg, #4285F4, #34A853)", color: "#fff",
-          fontSize: "14px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-          boxShadow: "0 4px 16px rgba(66,133,244,0.3)",
-        }}>
-          Googleでログイン
-        </button>
-      </div>
-    );
-  }
-
-  const today = todayStr();
-  const todayEvents = calendarEvents.filter(e => {
-    const start = e.start?.dateTime || e.start?.date || "";
-    return start.startsWith(today);
-  });
-  const upcomingEvents = calendarEvents.filter(e => {
-    const start = e.start?.dateTime || e.start?.date || "";
-    return !start.startsWith(today);
-  });
-  const incompleteTasks = localTasks.filter(t => t.status !== "Done");
-
-  return (
-    <div>
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-          <span style={{ fontSize: "16px" }}>{"\u{1F310}"}</span>
-          <span style={{ fontSize: "14px", fontWeight: 600, color: "#fff" }}>Google連携</span>
-          {loading && <span style={{ fontSize: "10px", color: "#4285F4" }}>同期中...</span>}
-        </div>
-        <div style={{ display: "flex", gap: "6px" }}>
-          <button onClick={onRefresh} style={{ padding: "5px 10px", border: "1px solid #1e1e3a", borderRadius: "6px", background: "transparent", color: "#888", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" }}>{"\u{1F504}"} 更新</button>
-          <button onClick={onSignOut} style={{ padding: "5px 10px", border: "1px solid #FF525244", borderRadius: "6px", background: "transparent", color: "#FF5252", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" }}>ログアウト</button>
-        </div>
-      </div>
-
-      {/* Calendar Events */}
-      <Section title={"\u{1F4C5} 今日の予定 (" + todayEvents.length + ")"} color="#4285F4">
-        {todayEvents.length === 0 && <div style={{ padding: "12px", fontSize: "12px", color: "#555" }}>今日の予定はありません</div>}
-        {todayEvents.map((e, i) => {
-          const startTime = e.start?.dateTime ? new Date(e.start.dateTime).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "終日";
-          const endTime = e.end?.dateTime ? new Date(e.end.dateTime).toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "";
-          return (
-            <div key={i} style={{ padding: "10px 14px", borderRadius: "8px", background: "#111122", border: "1px solid #1a1a2e", display: "flex", alignItems: "center", gap: "10px" }}>
-              <div style={{ width: "3px", height: "32px", borderRadius: "2px", background: "#4285F4", flexShrink: 0 }} />
-              <div>
-                <div style={{ fontSize: "12px", fontWeight: 500, color: "#ddd" }}>{e.summary || "(タイトルなし)"}</div>
-                <div style={{ fontSize: "10px", color: "#888", marginTop: "2px", fontFamily: "JetBrains Mono" }}>{startTime}{endTime ? ` - ${endTime}` : ""}</div>
-              </div>
-            </div>
-          );
-        })}
-      </Section>
-
-      {/* Upcoming Events */}
-      {upcomingEvents.length > 0 && (
-        <Section title={"\u{1F4C6} 今後の予定 (" + upcomingEvents.length + ")"} color="#34A853">
-          {upcomingEvents.slice(0, 10).map((e, i) => {
-            const startDate = e.start?.dateTime ? new Date(e.start.dateTime) : new Date(e.start?.date + "T00:00:00");
-            const dateStr = `${startDate.getMonth() + 1}/${startDate.getDate()}`;
-            const timeStr = e.start?.dateTime ? startDate.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" }) : "終日";
-            return (
-              <div key={i} style={{ padding: "8px 14px", borderRadius: "8px", background: "#111122", border: "1px solid #1a1a2e", display: "flex", alignItems: "center", gap: "10px" }}>
-                <div style={{ width: "3px", height: "28px", borderRadius: "2px", background: "#34A853", flexShrink: 0 }} />
-                <div style={{ minWidth: "45px" }}>
-                  <span style={{ fontSize: "10px", color: "#34A853", fontFamily: "JetBrains Mono" }}>{dateStr}</span>
-                </div>
-                <div>
-                  <div style={{ fontSize: "11px", color: "#ddd" }}>{e.summary || "(タイトルなし)"}</div>
-                  <div style={{ fontSize: "9px", color: "#666", fontFamily: "JetBrains Mono" }}>{timeStr}</div>
-                </div>
-              </div>
-            );
-          })}
-        </Section>
-      )}
-
-      {/* Google Tasks */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "10px", marginTop: "8px" }}>
-        <span style={{ fontSize: "13px", fontWeight: 600, color: "#FBBC04" }}>{"\u2705"} Googleタスク</span>
-        {googleTaskLists.length > 1 && (
-          <select value={selectedTaskList || ""} onChange={(e) => onTaskListChange(e.target.value)} style={{ ...inputStyle, width: "auto", maxWidth: "150px", fontSize: "10px", padding: "4px 8px" }}>
-            {googleTaskLists.map(l => <option key={l.id} value={l.id}>{l.title}</option>)}
-          </select>
-        )}
-      </div>
-
-      {/* Sync buttons */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
-        <button onClick={() => setShowPushPicker(!showPushPicker)} style={{ flex: 1, padding: "10px", border: "1px solid #4285F444", borderRadius: "8px", background: "#4285F415", color: "#4285F4", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-          {"\u2B06\uFE0F"} KEN OPS {"\u2192"} Google
-        </button>
-        <button onClick={onImport} style={{ flex: 1, padding: "10px", border: "1px solid #34A85344", borderRadius: "8px", background: "#34A85315", color: "#34A853", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
-          {"\u2B07\uFE0F"} Google {"\u2192"} KEN OPS
-        </button>
-      </div>
-
-      {/* Push picker */}
-      {showPushPicker && (
-        <div style={{ marginBottom: "16px", border: "1px solid #1a1a2e", borderRadius: "10px", padding: "12px", background: "#0d0d18" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <span style={{ fontSize: "11px", color: "#888" }}>タスクを選んで送信、または一括送信</span>
-            <button onClick={() => { onPushAll(); setShowPushPicker(false); }} style={{ padding: "4px 10px", border: "none", borderRadius: "6px", background: "#4285F4", color: "#fff", fontSize: "10px", cursor: "pointer", fontFamily: "inherit" }}>全て送信</button>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px", maxHeight: "200px", overflowY: "auto" }}>
-            {incompleteTasks.map(t => {
-              const proj = getProject(t.project);
-              return (
-                <div key={t.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 10px", borderRadius: "6px", background: "#111122", border: "1px solid #1a1a2e" }}>
-                  <div style={{ fontSize: "11px", color: "#ddd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, marginRight: "8px" }}>
-                    <span style={{ color: proj.color, fontSize: "9px" }}>{proj.emoji}</span> {t.title}
-                  </div>
-                  <button onClick={() => onPushTask(t)} style={{ padding: "3px 8px", border: "none", borderRadius: "4px", background: "#4285F430", color: "#4285F4", fontSize: "9px", cursor: "pointer", fontFamily: "inherit", flexShrink: 0 }}>送信</button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Google task list */}
-      <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-        {googleTasks.length === 0 && <div style={{ padding: "12px", fontSize: "12px", color: "#555" }}>Googleタスクはありません</div>}
-        {googleTasks.map((gt, i) => {
-          const isCompleted = gt.status === "completed";
-          const dueStr = gt.due ? gt.due.split("T")[0].slice(5) : "";
-          return (
-            <div key={i} style={{ padding: "8px 12px", borderRadius: "8px", background: isCompleted ? "#0a0a12" : "#111122", border: "1px solid #1a1a2e", opacity: isCompleted ? 0.5 : 1, display: "flex", alignItems: "center", gap: "8px" }}>
-              <div style={{ width: "14px", height: "14px", borderRadius: "3px", border: isCompleted ? "none" : "2px solid #FBBC0444", background: isCompleted ? "#66BB6A" : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "8px", color: "#fff" }}>{isCompleted && "\u2713"}</div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: "11px", color: isCompleted ? "#444" : "#ddd", textDecoration: isCompleted ? "line-through" : "none" }}>{gt.title}</div>
-                {(gt.notes || dueStr) && (
-                  <div style={{ display: "flex", gap: "6px", marginTop: "2px" }}>
-                    {gt.notes && <span style={{ fontSize: "9px", color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "200px" }}>{gt.notes}</span>}
-                    {dueStr && <span style={{ fontSize: "9px", color: "#FBBC04", fontFamily: "JetBrains Mono" }}>{"\u{1F4C5}"}{dueStr}</span>}
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
