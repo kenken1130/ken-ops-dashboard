@@ -164,6 +164,8 @@ function App(){
 
   useEffect(()=>{(async()=>{try{const d=await fbGet("data");if(d&&d.tasks){setTasks(d.tasks);setRoutines(d.routines||DEFAULT_ROUTINES);setGs(d.gs||{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0});setSa(d.sa||false)}else{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES);await fbSet("data",{tasks:INITIAL_TASKS,routines:DEFAULT_ROUTINES,gs:{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0},sa:false})}}catch{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES)}setLd(true)})()},[]);
   useEffect(()=>{if(!ld)return;fbSet("data",{tasks,routines,gs,sa})},[tasks,routines,gs,sa,ld]);
+  // Auto-sync: poll Firebase every 30s for changes from Kai
+  useEffect(()=>{if(!ld)return;const iv=setInterval(async()=>{try{const d=await fbGet("data");if(d&&d.tasks){const remote=JSON.stringify(d.tasks);const local=JSON.stringify(tasks);if(remote!==local){setTasks(d.tasks);if(d.gs)setGs(d.gs);if(d.routines)setRoutines(d.routines)}}}catch{}},30000);return()=>clearInterval(iv)},[ld,tasks]);
   useEffect(()=>{if(!ld)return;const t=tS(),y=aD(t,-1);setGs(p=>{if(p.lastActiveDate===t)return p;if(p.lastActiveDate===y)return{...p,completedToday:0};if(p.lastActiveDate&&p.lastActiveDate<y)return{...p,streak:0,completedToday:0};return p})},[ld]);
 
   const comp=useCallback(id=>{const t=tasks.find(x=>x.id===id);if(!t||t.status==="Done")return;const pts=gPr(t.priority).pts;
