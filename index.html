@@ -110,14 +110,16 @@ function genSched(tasks,routines){
 
 // ─── GOOGLE API CONFIG ─────────────────────────────────────────
 const GOOGLE_CLIENT_ID="40290120493-m3rh2ftv68543kmbpusq8s9u4cqomh9c.apps.googleusercontent.com";
-const SCOPES="https://www.googleapis.com/auth/calendar.readonly";
+const SCOPES="https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/tasks";
 let tokenClient=null;let gapiInited=false;let gisInited=false;
 
-function initGapi(){return new Promise(resolve=>{if(typeof gapi==="undefined"){resolve(false);return}gapi.load("client",async()=>{try{await gapi.client.init({});await gapi.client.load("calendar","v3");gapiInited=true;resolve(true)}catch(e){console.error("gapi init error",e);resolve(false)}})})}
+function initGapi(){return new Promise(resolve=>{if(typeof gapi==="undefined"){resolve(false);return}gapi.load("client",async()=>{try{await gapi.client.init({});await gapi.client.load("calendar","v3");try{await gapi.client.load("tasks","v1")}catch(e){console.warn("tasks API load failed",e)}gapiInited=true;resolve(true)}catch(e){console.error("gapi init error",e);resolve(false)}})})}
 
 function initGis(callback){if(typeof google==="undefined")return;tokenClient=google.accounts.oauth2.initTokenClient({client_id:GOOGLE_CLIENT_ID,scope:SCOPES,callback:callback});gisInited=true}
 
 async function fetchCalendarEvents(){try{const now=new Date();const weekLater=new Date(now.getTime()+7*86400000);const res=await gapi.client.calendar.events.list({calendarId:"primary",timeMin:now.toISOString(),timeMax:weekLater.toISOString(),singleEvents:true,orderBy:"startTime",maxResults:20});return res.result.items||[]}catch(e){console.error("Calendar fetch error",e);return[]}}
+async function fetchGoogleTasks(){try{if(!gapi.client.tasks)return[];const listsRes=await gapi.client.tasks.tasklists.list({maxResults:10});const lists=listsRes.result.items||[];const all=[];for(const l of lists){try{const r=await gapi.client.tasks.tasks.list({tasklist:l.id,showCompleted:false,maxResults:50});(r.result.items||[]).forEach(t=>{if(t.status!=="completed"){all.push({gid:t.id,lid:l.id,ln:l.title,title:t.title,due:t.due?t.due.split("T")[0]:"",notes:t.notes||""})}})}catch(e2){}}return all}catch(e){console.error("Tasks fetch error",e);return[]}}
+async function doneGTask(lid,gid){try{await gapi.client.tasks.tasks.patch({tasklist:lid,task:gid,resource:{status:"completed"}})}catch(e){console.error(e)}}
 
 // ─── KAI (OpenClaw) API ──────────────────────────────────────
 const KAI_SETTINGS_KEY="ken-ops-kai";
@@ -152,13 +154,13 @@ function App(){
   const[kaiConnected,setKaiConnected]=useState(!!getKaiSettings());
 
   // Google Calendar state
-  const[gSignedIn,setGSignedIn]=useState(false);const[calEvts,setCalEvts]=useState([]);const[gLoading,setGLoading]=useState(false);
+  const[gSignedIn,setGSignedIn]=useState(false);const[calEvts,setCalEvts]=useState([]);const[gLoading,setGLoading]=useState(false);const[gTasks,setGTasks]=useState([]);
 
   // Init Google APIs
-  useEffect(()=>{const waitAndInit=async()=>{let attempts=0;while((typeof gapi==="undefined"||typeof google==="undefined")&&attempts<30){await new Promise(r=>setTimeout(r,200));attempts++}await initGapi();initGis(resp=>{if(resp.error){console.error(resp);return}setGSignedIn(true);gapi.client.setToken({access_token:resp.access_token});refreshCal()})};waitAndInit()},[]);
+  useEffect(()=>{const waitAndInit=async()=>{let attempts=0;while((typeof gapi==="undefined"||typeof google==="undefined")&&attempts<30){await new Promise(r=>setTimeout(r,200));attempts++}await initGapi();initGis(resp=>{if(resp.error){console.error(resp);return}setGSignedIn(true);gapi.client.setToken({access_token:resp.access_token});refreshCal();(async()=>{const gt=await fetchGoogleTasks();setGTasks(gt)})()})};waitAndInit()},[]);
   const handleGSignIn=()=>{if(!tokenClient)return;tokenClient.requestAccessToken({prompt:"consent"})};
   const handleGSignOut=()=>{const token=gapi.client.getToken();if(token){google.accounts.oauth2.revoke(token.access_token);gapi.client.setToken(null)}setGSignedIn(false);setCalEvts([])};
-  const refreshCal=async()=>{setGLoading(true);try{const events=await fetchCalendarEvents();setCalEvts(events)}catch(e){console.error(e)}setGLoading(false)};
+  const refreshCal=async()=>{setGLoading(true);try{const events=await fetchCalendarEvents();setCalEvts(events)}catch(e){console.error(e)}setGLoading(false)};const refreshGTasks=async()=>{const gt=await fetchGoogleTasks();setGTasks(gt)};
 
   useEffect(()=>{(async()=>{try{const d=await fbGet("data");if(d&&d.tasks){setTasks(d.tasks);setRoutines(d.routines||DEFAULT_ROUTINES);setGs(d.gs||{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0});setSa(d.sa||false)}else{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES);await fbSet("data",{tasks:INITIAL_TASKS,routines:DEFAULT_ROUTINES,gs:{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0},sa:false})}}catch{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES)}setLd(true)})()},[]);
   useEffect(()=>{if(!ld)return;fbSet("data",{tasks,routines,gs,sa})},[tasks,routines,gs,sa,ld]);
@@ -217,7 +219,7 @@ function App(){
         const msg="あなたはKai、Kenの右腕AIアシスタント。今日のスケジュールを見て、Kenに朝の一言ブリーフィングを日本語で書いて。短く、エネルギッシュに。スケジュール:\n"+schDesc;
         const r=await askKai(msg);if(r)setKaiBriefing(r);setKaiLoading(false);
       }}/>}
-      {view==="dashboard"&&<DashV tt={tdt} ut={ut} dit={dit} ot={ot} rtn={routines} gs={gs} upd={upd} edit={setEt} sf={sf} calEvts={calEvts} gSignedIn={gSignedIn} gSignIn={handleGSignIn} gSignOut={handleGSignOut} gRefresh={refreshCal} gLoading={gLoading}/>}
+      {view==="dashboard"&&<DashV tt={tdt} ut={ut} dit={dit} ot={ot} rtn={routines} gs={gs} upd={upd} edit={setEt} sf={sf} calEvts={calEvts} gSignedIn={gSignedIn} gSignIn={handleGSignIn} gSignOut={handleGSignOut} gRefresh={()=>{refreshCal();refreshGTasks()}} gLoading={gLoading} gTasks={gTasks} onDoneGTask={async(lid,gid)=>{await doneGTask(lid,gid);refreshGTasks()}}/>}
       {view==="kanban"&&<KanV sts={STATUSES} flt={flt} srt={srt} drop={(e,s)=>{e.preventDefault();if(dt){upd(dt.id,{status:s});setDt(null)}}} ds={(e,t)=>{setDt(t);e.dataTransfer.effectAllowed="move"}} upd={upd} edit={setEt}/>}
       {view==="list"&&<ListV srt={srt} sb={sb} ssb={setSb} upd={upd} edit={setEt}/>}
       {view==="gantt"&&<GanttV tasks={flt} edit={setEt} td={td}/>}
@@ -321,7 +323,7 @@ function FocusMode({task,lv,gs,comp,skip,exit}){const[tm,setTm]=useState(25*60),
 }
 
 // ─── DASHBOARD ─────────────────────────────────────────────────
-function DashV({tt,ut,dit,ot,rtn,gs,upd,edit,sf,calEvts,gSignedIn,gSignIn,gSignOut,gRefresh,gLoading}){const dow=new Date().getDay();const tr=rtn.filter(r=>r.freq==="daily"||(r.freq==="weekly_mon"&&dow===1));const _td=tS();const todayEvts=(calEvts||[]).filter(e=>(e.start?.dateTime||e.start?.date||"").startsWith(_td));const upcomingEvts=(calEvts||[]).filter(e=>!(e.start?.dateTime||e.start?.date||"").startsWith(_td));return(<div>
+function DashV({tt,ut,dit,ot,rtn,gs,upd,edit,sf,calEvts,gSignedIn,gSignIn,gSignOut,gRefresh,gLoading,gTasks=[],onDoneGTask}){const dow=new Date().getDay();const tr=rtn.filter(r=>r.freq==="daily"||(r.freq==="weekly_mon"&&dow===1));const _td=tS();const todayEvts=(calEvts||[]).filter(e=>(e.start?.dateTime||e.start?.date||"").startsWith(_td));const upcomingEvts=(calEvts||[]).filter(e=>!(e.start?.dateTime||e.start?.date||"").startsWith(_td));return(<div>
   <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px",marginBottom:"16px"}}>{[{l:"今日",c:tt.length,cl:"#FF6B35",e:"📌"},{l:"緊急",c:ut.length,cl:"#E71D36",e:"🔴"},{l:"進行中",c:dit.length,cl:"#2EC4B6",e:"⚡"},{l:"期限切",c:ot.length,cl:"#FF5252",e:"⚠️"}].map((s,i)=>(<div key={i} style={{padding:"10px",borderRadius:"10px",background:`${s.cl}08`,border:`1px solid ${s.cl}20`}}><div style={{fontSize:"9px",color:"#666"}}>{s.e} {s.l}</div><div style={{fontSize:"22px",fontWeight:700,color:s.cl,fontFamily:"JetBrains Mono"}}>{s.c}</div></div>))}</div>
   <button onClick={sf} style={{width:"100%",padding:"12px",border:"1px solid #7B68EE44",borderRadius:"10px",background:"linear-gradient(135deg,#7B68EE15,#FF6B3515)",color:"#fff",fontSize:"13px",fontWeight:600,cursor:"pointer",fontFamily:"inherit",marginBottom:"16px"}}>🎯 フォーカスモード</button>
   {!gSignedIn?(<button onClick={gSignIn} style={{width:"100%",padding:"10px",border:"1px solid #4285F444",borderRadius:"8px",background:"#4285F410",color:"#4285F4",fontSize:"11px",fontWeight:500,cursor:"pointer",fontFamily:"inherit",marginBottom:"16px",display:"flex",alignItems:"center",justifyContent:"center",gap:"6px"}}>📅 Googleカレンダーを連携する</button>):(
@@ -336,6 +338,29 @@ function DashV({tt,ut,dit,ot,rtn,gs,upd,edit,sf,calEvts,gSignedIn,gSignIn,gSignO
     {todayEvts.length>0&&<div style={{marginBottom:"10px"}}><div style={{fontSize:"9px",color:"#888",marginBottom:"4px"}}>今日</div><div style={{display:"flex",flexDirection:"column",gap:"3px"}}>{todayEvts.map((e,i)=>{const st=e.start?.dateTime?new Date(e.start.dateTime).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):"終日";const en=e.end?.dateTime?new Date(e.end.dateTime).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):"";return(<div key={i} style={{padding:"6px 10px",borderRadius:"6px",background:"#111122",border:"1px solid #1a1a2e",display:"flex",alignItems:"center",gap:"8px"}}><div style={{width:"3px",height:"24px",borderRadius:"2px",background:"#4285F4",flexShrink:0}}/><div><div style={{fontSize:"11px",color:"#ddd"}}>{e.summary||"(タイトルなし)"}</div><div style={{fontSize:"8px",color:"#888",fontFamily:"JetBrains Mono"}}>{st}{en?` - ${en}`:""}</div></div></div>)})}</div></div>}
     {todayEvts.length===0&&upcomingEvts.length===0&&<div style={{padding:"10px",fontSize:"10px",color:"#555",textAlign:"center"}}>今週の予定はありません</div>}
     {upcomingEvts.length>0&&<div><div style={{fontSize:"9px",color:"#888",marginBottom:"4px"}}>今後の予定</div><div style={{display:"flex",flexDirection:"column",gap:"3px"}}>{upcomingEvts.slice(0,5).map((e,i)=>{const sd=e.start?.dateTime?new Date(e.start.dateTime):new Date((e.start?.date||_td)+"T00:00:00");const ds=`${sd.getMonth()+1}/${sd.getDate()}`;const ts=e.start?.dateTime?sd.toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):"終日";return(<div key={i} style={{padding:"5px 10px",borderRadius:"5px",background:"#0d0d18",border:"1px solid #1a1a2e",display:"flex",alignItems:"center",gap:"8px"}}><span style={{fontSize:"9px",color:"#34A853",fontFamily:"JetBrains Mono",minWidth:"30px"}}>{ds}</span><div><div style={{fontSize:"10px",color:"#bbb"}}>{e.summary||"(タイトルなし)"}</div><div style={{fontSize:"7px",color:"#666",fontFamily:"JetBrains Mono"}}>{ts}</div></div></div>)})}{upcomingEvts.length>5&&<div style={{fontSize:"9px",color:"#555",textAlign:"center",padding:"3px"}}>他 {upcomingEvts.length-5} 件</div>}</div></div>}
+  {/* Google Tasks Section */}
+  {gTasks.length>0&&(()=>{
+    const td2=tS();
+    const ov=gTasks.filter(t=>t.due&&t.due<td2);
+    const tod=gTasks.filter(t=>t.due===td2);
+    const up=gTasks.filter(t=>!t.due||t.due>td2);
+    return(<div style={{marginTop:"12px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"6px"}}>
+        <h3 style={{fontSize:"12px",fontWeight:600,color:"#34A853",margin:0}}>✅ Googleタスク</h3>
+        <span style={{fontSize:"9px",color:"#555"}}>{gTasks.length}件</span>
+      </div>
+      {ov.length>0&&<div style={{marginBottom:"6px"}}>
+        <div style={{fontSize:"9px",color:"#FF5252",marginBottom:"3px"}}>⚠️ 期限切れ ({ov.length})</div>
+        {ov.map((t,i)=><GTRow key={i} t={t} done={onDoneGTask} red/>)}
+      </div>}
+      {tod.length>0&&<div style={{marginBottom:"6px"}}>
+        <div style={{fontSize:"9px",color:"#34A853",marginBottom:"3px"}}>📌 今日 ({tod.length})</div>
+        {tod.map((t,i)=><GTRow key={i} t={t} done={onDoneGTask} green/>)}
+      </div>}
+      {up.slice(0,8).map((t,i)=><GTRow key={i} t={t} done={onDoneGTask}/>)}
+      {up.length>8&&<div style={{fontSize:"9px",color:"#555",textAlign:"center",padding:"3px"}}>他 {up.length-8} 件</div>}
+    </div>);
+  })()}
   </div>)}
   {tr.length>0&&<Sec t="🔄 ルーティン" c="#00B8D4">{tr.map(r=><div key={r.id} style={{padding:"8px 12px",borderRadius:"6px",background:"#111122",border:"1px solid #1a1a2e",display:"flex",justifyContent:"space-between"}}><span style={{fontSize:"12px",color:"#ddd"}}>{r.time} {r.title}</span><span style={{fontSize:"10px",color:"#7B68EE",fontFamily:"JetBrains Mono"}}>+{r.pts}pt</span></div>)}</Sec>}
   {ot.length>0&&<Sec t="⚠️ 期限切れ" c="#FF5252">{ot.map(t=><TC key={t.id} task={t} upd={upd} edit={edit}/>)}</Sec>}
@@ -376,6 +401,10 @@ function GrowthV({tasks,gs,lv,rtn,srm}){const dn=tasks.filter(t=>t.status==="Don
 }
 
 // ─── SHARED ────────────────────────────────────────────────────
+function GTRow({t,done,red,green}){const c=red?"#FF5252":green?"#34A853":"#888";return(<div style={{padding:"5px 10px",borderRadius:"5px",background:red?"#FF525208":green?"#34A85308":"#0d0d18",border:`1px solid ${c}20`,marginBottom:"3px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+  <div style={{flex:1,overflow:"hidden"}}><div style={{fontSize:"10px",color:red?"#ffaaaa":green?"#aaffaa":"#bbb",textOverflow:"ellipsis",overflow:"hidden",whiteSpace:"nowrap"}}>{t.title}</div><div style={{fontSize:"7px",color:"#555"}}>{t.ln}{t.due?` · ${t.due.slice(5)}`:""}</div></div>
+  <button onClick={()=>done&&done(t.lid,t.gid)} style={{flexShrink:0,marginLeft:"6px",padding:"2px 6px",border:"1px solid #66BB6A44",borderRadius:"4px",background:"transparent",color:"#66BB6A",fontSize:"9px",cursor:"pointer",fontFamily:"inherit"}}>✓</button>
+</div>)}
 function FB({a,c,o,children}){return<button onClick={o} style={{padding:"2px 8px",border:a?`1px solid ${c}44`:"1px solid transparent",borderRadius:"14px",background:a?`${c}15`:"transparent",color:a?c:"#555",fontSize:"10px",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>{children}</button>}
 function Sec({t,c,children}){return<div style={{marginBottom:"16px"}}><h3 style={{fontSize:"12px",fontWeight:600,color:c,marginBottom:"8px"}}>{t}</h3><div style={{display:"flex",flexDirection:"column",gap:"4px"}}>{children}</div></div>}
 function TC({task:t,upd,edit,compact}){const p=gP(t.project),pr=gPr(t.priority),td=tS(),od=t.deadline&&t.deadline<td&&t.status!=="Done";return(<div onClick={()=>edit(t)} style={{padding:compact?"7px 9px":"9px 12px",borderRadius:"7px",background:t.status==="Done"?"#0a0a12":"#111122",border:od?"1px solid #FF525244":"1px solid #1a1a2e",cursor:"pointer",opacity:t.status==="Done"?.5:1}}><div style={{display:"flex",alignItems:"flex-start",gap:"7px"}}><button onClick={e=>{e.stopPropagation();upd(t.id,{status:t.status==="Done"?"To Do":"Done"})}} style={{width:15,height:15,borderRadius:3,border:t.status==="Done"?"none":`2px solid ${p.color}44`,background:t.status==="Done"?"#66BB6A":"transparent",cursor:"pointer",flexShrink:0,marginTop:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontSize:"8px"}}>{t.status==="Done"&&"✓"}</button><div style={{flex:1,minWidth:0}}><div style={{fontSize:"11px",fontWeight:500,color:t.status==="Done"?"#444":"#ddd",textDecoration:t.status==="Done"?"line-through":"none"}}>{t.title}</div><div style={{display:"flex",gap:"5px",marginTop:"3px",flexWrap:"wrap",alignItems:"center"}}><span style={{fontSize:"8px",padding:"1px 5px",borderRadius:"6px",background:`${p.color}15`,color:p.color}}>{p.emoji}{p.name}</span><span style={{fontSize:"8px",color:"#555"}}>{pr.emoji}</span>{!compact&&<span style={{fontSize:"8px",color:"#7B68EE",fontFamily:"JetBrains Mono"}}>+{pr.pts}pt</span>}{!compact&&t.est_minutes&&<span style={{fontSize:"8px",color:"#555",fontFamily:"JetBrains Mono"}}>{t.est_minutes}min</span>}{t.deadline&&<span style={{fontSize:"8px",color:od?"#FF5252":"#555",fontFamily:"JetBrains Mono"}}>{od?"⚠️":"📅"}{t.deadline.slice(5)}</span>}</div></div></div></div>)}
