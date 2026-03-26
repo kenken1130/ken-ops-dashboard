@@ -116,12 +116,37 @@ function initGis(callback){if(typeof google==="undefined")return;tokenClient=goo
 
 async function fetchCalendarEvents(){try{const now=new Date();const weekLater=new Date(now.getTime()+7*86400000);const res=await gapi.client.calendar.events.list({calendarId:"primary",timeMin:now.toISOString(),timeMax:weekLater.toISOString(),singleEvents:true,orderBy:"startTime",maxResults:20});return res.result.items||[]}catch(e){console.error("Calendar fetch error",e);return[]}}
 
+// ─── KAI (OpenClaw) API ──────────────────────────────────────
+const KAI_SETTINGS_KEY="ken-ops-kai";
+function getKaiSettings(){try{const v=localStorage.getItem(KAI_SETTINGS_KEY);return v?JSON.parse(v):null}catch{return null}}
+function saveKaiSettings(s){localStorage.setItem(KAI_SETTINGS_KEY,JSON.stringify(s))}
+
+async function askKai(message){
+  const s=getKaiSettings();
+  if(!s||!s.url||!s.token)return null;
+  try{
+    const res=await fetch(s.url+"/v1/responses",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":"Bearer "+s.token},
+      body:JSON.stringify({model:"openclaw",input:message,user:"ken-ops"})
+    });
+    if(!res.ok)throw new Error("Kai API error: "+res.status);
+    const data=await res.json();
+    const out=data.output;
+    if(out&&out.length>0&&out[0].content&&out[0].content.length>0){return out[0].content[0].text}
+    return null;
+  }catch(e){console.error("Kai error:",e);return null}
+}
+
 function App(){
   const[tasks,setTasks]=useState([]);const[routines,setRoutines]=useState([]);
   const[gs,setGs]=useState({totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0});
   const[view,setView]=useState("schedule");const[pf,setPf]=useState("all");const[sb,setSb]=useState("priority");
   const[dt,setDt]=useState(null);const[et,setEt]=useState(null);const[sam,setSam]=useState(false);const[srm,setSrm]=useState(false);
   const[ft,setFt]=useState(null);const[cel,setCel]=useState(null);const[ld,setLd]=useState(false);const[sa,setSa]=useState(false);
+  const[showKaiSettings,setShowKaiSettings]=useState(false);
+  const[kaiBriefing,setKaiBriefing]=useState(null);const[kaiLoading,setKaiLoading]=useState(false);
+  const[kaiConnected,setKaiConnected]=useState(!!getKaiSettings());
 
   // Google Calendar state
   const[gSignedIn,setGSignedIn]=useState(false);const[calEvts,setCalEvts]=useState([]);const[gLoading,setGLoading]=useState(false);
@@ -183,7 +208,12 @@ function App(){
     </div>
 
     <div style={{padding:"14px 16px",paddingBottom:"80px"}}>
-      {view==="schedule"&&<SchedView sch={sch} sa={sa} approve={()=>setSa(true)} comp={comp} focus={id=>{const t=tasks.find(x=>x.id===id);if(t)setFt(t)}} gs={gs}/>}
+      {view==="schedule"&&<SchedView sch={sch} sa={sa} approve={()=>setSa(true)} comp={comp} focus={id=>{const t=tasks.find(x=>x.id===id);if(t)setFt(t)}} gs={gs} kaiBriefing={kaiBriefing} kaiLoading={kaiLoading} kaiConnected={kaiConnected} onKaiSettings={()=>setShowKaiSettings(true)} fetchBriefing={async()=>{
+        if(!getKaiSettings())return;setKaiLoading(true);
+        const schDesc=sch.schedule.map(b=>fm(b.start)+"-"+fm(b.end)+" "+b.title+" ("+gP(b.project).name+")").join("\n");
+        const msg="あなたはKai、Kenの右腕AIアシスタント。今日のスケジュールを見て、Kenに朝の一言ブリーフィングを日本語で書いて。短く、エネルギッシュに。スケジュール:\n"+schDesc;
+        const r=await askKai(msg);if(r)setKaiBriefing(r);setKaiLoading(false);
+      }}/>}
       {view==="dashboard"&&<DashV tt={tdt} ut={ut} dit={dit} ot={ot} rtn={routines} gs={gs} upd={upd} edit={setEt} sf={sf} calEvts={calEvts} gSignedIn={gSignedIn} gSignIn={handleGSignIn} gSignOut={handleGSignOut} gRefresh={refreshCal} gLoading={gLoading}/>}
       {view==="kanban"&&<KanV sts={STATUSES} flt={flt} srt={srt} drop={(e,s)=>{e.preventDefault();if(dt){upd(dt.id,{status:s});setDt(null)}}} ds={(e,t)=>{setDt(t);e.dataTransfer.effectAllowed="move"}} upd={upd} edit={setEt}/>}
       {view==="list"&&<ListV srt={srt} sb={sb} ssb={setSb} upd={upd} edit={setEt}/>}
@@ -198,20 +228,27 @@ function App(){
     {sam&&<AddM add={t=>{add(t);setSam(false)}} close={()=>setSam(false)}/>}
     {et&&<EditM task={et} save={u=>{upd(et.id,u);setEt(null)}} del={()=>{del(et.id);setEt(null)}} close={()=>setEt(null)}/>}
     {srm&&<RtnM routines={routines} save={setRoutines} close={()=>setSrm(false)}/>}
+    {showKaiSettings&&<KaiSettingsModal close={()=>setShowKaiSettings(false)} onSave={(s)=>{saveKaiSettings(s);setKaiConnected(true);setShowKaiSettings(false)}} onDisconnect={()=>{localStorage.removeItem(KAI_SETTINGS_KEY);setKaiConnected(false);setKaiBriefing(null);setShowKaiSettings(false)}} connected={kaiConnected}/>}
   </div>);
 }
 
 // ─── SCHEDULE VIEW ─────────────────────────────────────────────
-function SchedView({sch,sa,approve,comp,focus,gs}){
+function SchedView({sch,sa,approve,comp,focus,gs,kaiBriefing,kaiLoading,kaiConnected,onKaiSettings,fetchBriefing}){
   const{schedule:blocks,totalPts}=sch;
   const now=new Date(),curMin=now.getHours()*60+now.getMinutes();
+  const briefingRef=useRef(false);
+  useEffect(()=>{if(!briefingRef.current&&kaiConnected&&!kaiBriefing&&!kaiLoading){briefingRef.current=true;fetchBriefing()}},[kaiConnected]);
 
   if(!sa)return(<div>
     <div style={{background:"#111122",borderRadius:"14px",padding:"20px",marginBottom:"16px",border:"1px solid #1a1a2e"}}>
-      <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"12px"}}>
-        <span style={{fontSize:"18px"}}>🤖</span><span style={{fontSize:"13px",fontWeight:600,color:"#00B8D4"}}>Kai</span><span style={{fontSize:"10px",color:"#444"}}>Morning briefing</span>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+          <span style={{fontSize:"18px"}}>🤖</span><span style={{fontSize:"13px",fontWeight:600,color:"#00B8D4"}}>Kai</span><span style={{fontSize:"10px",color:"#444"}}>Morning briefing</span>
+        </div>
+        <button onClick={onKaiSettings} style={{padding:"3px 8px",border:"1px solid #1e1e3a",borderRadius:"4px",background:"transparent",color:kaiConnected?"#00B8D4":"#555",fontSize:"9px",cursor:"pointer",fontFamily:"inherit"}}>{kaiConnected?"⚡ 接続中":"⚙️ Kai設定"}</button>
       </div>
-      <div style={{fontSize:"14px",color:"#ddd",lineHeight:1.8,marginBottom:"16px"}}>おはよう、Ken。今日のミッション組んだよ。</div>
+      {kaiLoading?<div style={{fontSize:"13px",color:"#00B8D4",marginBottom:"16px"}}>🤖 Kaiが考え中...</div>
+      :<div style={{fontSize:"14px",color:"#ddd",lineHeight:1.8,marginBottom:"16px",whiteSpace:"pre-wrap"}}>{kaiBriefing||"おはよう、Ken。今日のミッション組んだよ。"}</div>}
       {blocks.map((b,i)=>(<div key={i} style={{display:"flex",alignItems:"center",gap:"10px",padding:"10px 12px",marginBottom:"4px",borderRadius:"8px",background:`${b.color}10`,borderLeft:`3px solid ${b.color}`}}>
         <span style={{fontSize:"12px",color:"#888",fontFamily:"JetBrains Mono",width:"45px",flexShrink:0}}>{fm(b.start)}</span>
         <span style={{fontSize:"12px",color:"#ddd",flex:1}}>{b.type==="routine"?"🔄 ":(b.emoji||"")+" "}{b.title}</span>
@@ -367,6 +404,29 @@ function RtnM({routines,save,close}){const[ls,setLs]=useState([...routines]);con
     <div style={{display:"flex",gap:"6px"}}><button onClick={close} style={{flex:1,padding:"9px",border:"1px solid #1e1e3a",borderRadius:"7px",background:"transparent",color:"#888",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}}>キャンセル</button><button onClick={()=>{save(ls);close()}} style={{flex:1,padding:"9px",border:"none",borderRadius:"7px",background:"linear-gradient(135deg,#7B68EE,#FF6B35)",color:"#fff",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit"}}>保存</button></div>
   </MO>)}
 
+
+function KaiSettingsModal({close,onSave,onDisconnect,connected}){
+  const existing=getKaiSettings()||{};
+  const[url,setUrl]=useState(existing.url||"");const[token,setToken]=useState(existing.token||"");const[testing,setTesting]=useState(false);const[result,setResult]=useState(null);
+  const testConn=async()=>{if(!url||!token)return;setTesting(true);setResult(null);
+    try{const res=await fetch(url+"/v1/responses",{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:JSON.stringify({model:"openclaw",input:"接続テスト。一言で返して。",user:"ken-ops-test"})});
+      if(!res.ok)throw new Error("HTTP "+res.status);const data=await res.json();
+      if(data.output&&data.output[0]?.content?.[0]?.text){setResult({ok:true,msg:data.output[0].content[0].text})}else{setResult({ok:false,msg:"レスポンス形式エラー"})}
+    }catch(e){setResult({ok:false,msg:e.message})}setTesting(false)};
+  return(<MO close={close}>
+    <h3 style={{margin:"0 0 14px",fontSize:"14px",color:"#fff"}}>🤖 Kai (OpenClaw) 設定</h3>
+    <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+      <div><FL>トンネルURL</FL><input value={url} onChange={e=>setUrl(e.target.value)} placeholder="https://xxxx.trycloudflare.com" style={iSt}/><div style={{fontSize:"8px",color:"#444",marginTop:"2px"}}>MacBook Proで cloudflared tunnel --url http://localhost:18789 を実行</div></div>
+      <div><FL>Gatewayトークン</FL><input type="password" value={token} onChange={e=>setToken(e.target.value)} placeholder="1d28d1a..." style={iSt}/></div>
+      <button onClick={testConn} disabled={testing||!url||!token} style={{padding:"8px",border:"1px solid #00B8D444",borderRadius:"7px",background:"#00B8D415",color:"#00B8D4",fontSize:"11px",cursor:"pointer",fontFamily:"inherit",opacity:(!url||!token)?.5:1}}>{testing?"テスト中...":"⚡ 接続テスト"}</button>
+      {result&&<div style={{padding:"8px 10px",borderRadius:"6px",background:result.ok?"#66BB6A15":"#FF525215",border:`1px solid ${result.ok?"#66BB6A":"#FF5252"}33`,fontSize:"11px",color:result.ok?"#66BB6A":"#FF5252"}}>{result.ok?"✅ Kai応答: "+result.msg:"❌ "+result.msg}</div>}
+      <div style={{display:"flex",gap:"6px"}}>
+        {connected&&<button onClick={onDisconnect} style={{padding:"9px 12px",border:"1px solid #FF525244",borderRadius:"7px",background:"transparent",color:"#FF5252",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}}>解除</button>}
+        <button onClick={close} style={{flex:1,padding:"9px",border:"1px solid #1e1e3a",borderRadius:"7px",background:"transparent",color:"#888",cursor:"pointer",fontSize:"11px",fontFamily:"inherit"}}>閉じる</button>
+        <button onClick={()=>{if(url&&token)onSave({url:url.replace(/\/$/,""),token})}} style={{flex:1,padding:"9px",border:"none",borderRadius:"7px",background:"linear-gradient(135deg,#00B8D4,#2EC4B6)",color:"#fff",cursor:"pointer",fontSize:"11px",fontWeight:600,fontFamily:"inherit",opacity:(!url||!token)?.5:1}}>保存</button>
+      </div>
+    </div>
+  </MO>)}
 
 ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
