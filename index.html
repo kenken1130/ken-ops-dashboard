@@ -68,6 +68,9 @@ const DEFAULT_ROUTINES=[
 ];
 
 const SK="ken-ops-v2";
+const FB_URL="https://ken-ops-default-rtdb.asia-southeast1.firebasedatabase.app";
+const fbGet=async(path)=>{try{const r=await fetch(FB_URL+"/"+path+".json");return await r.json()}catch(e){console.error("FB get error",e);return null}};
+const fbSet=async(path,data)=>{try{await fetch(FB_URL+"/"+path+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)})}catch(e){console.error("FB set error",e)}};
 const gP=id=>PROJECTS.find(p=>p.id===id)||PROJECTS[0];
 const gPr=id=>PRIORITIES.find(p=>p.id===id)||PRIORITIES[3];
 const tS=()=>new Date().toISOString().split("T")[0];
@@ -157,8 +160,8 @@ function App(){
   const handleGSignOut=()=>{const token=gapi.client.getToken();if(token){google.accounts.oauth2.revoke(token.access_token);gapi.client.setToken(null)}setGSignedIn(false);setCalEvts([])};
   const refreshCal=async()=>{setGLoading(true);try{const events=await fetchCalendarEvents();setCalEvts(events)}catch(e){console.error(e)}setGLoading(false)};
 
-  useEffect(()=>{try{const v=localStorage.getItem(SK);if(v){const d=JSON.parse(v);setTasks(d.tasks||INITIAL_TASKS);setRoutines(d.routines||DEFAULT_ROUTINES);setGs(d.gs||{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0});setSa(d.sa||false)}else{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES)}}catch{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES)}setLd(true)},[]);
-  useEffect(()=>{if(!ld)return;try{localStorage.setItem(SK,JSON.stringify({tasks,routines,gs,sa}))}catch{}},[tasks,routines,gs,sa,ld]);
+  useEffect(()=>{(async()=>{try{const d=await fbGet("data");if(d&&d.tasks){setTasks(d.tasks);setRoutines(d.routines||DEFAULT_ROUTINES);setGs(d.gs||{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0});setSa(d.sa||false)}else{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES);await fbSet("data",{tasks:INITIAL_TASKS,routines:DEFAULT_ROUTINES,gs:{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0},sa:false})}}catch{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES)}setLd(true)})()},[]);
+  useEffect(()=>{if(!ld)return;fbSet("data",{tasks,routines,gs,sa})},[tasks,routines,gs,sa,ld]);
   useEffect(()=>{if(!ld)return;const t=tS(),y=aD(t,-1);setGs(p=>{if(p.lastActiveDate===t)return p;if(p.lastActiveDate===y)return{...p,completedToday:0};if(p.lastActiveDate&&p.lastActiveDate<y)return{...p,streak:0,completedToday:0};return p})},[ld]);
 
   const comp=useCallback(id=>{const t=tasks.find(x=>x.id===id);if(!t||t.status==="Done")return;const pts=gPr(t.priority).pts;
