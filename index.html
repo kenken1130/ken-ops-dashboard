@@ -215,7 +215,7 @@ function App(){
     </div>
 
     <div style={{padding:"14px 16px",paddingBottom:"80px"}}>
-      {view==="schedule"&&<SchedView sch={sch} sa={sa} approve={()=>setSa(true)} comp={comp} focus={id=>{const t=tasks.find(x=>x.id===id);if(t)setFt(t)}} gs={gs} kaiBriefing={kaiBriefing} kaiLoading={kaiLoading} kaiConnected={kaiConnected} onKaiSettings={()=>setShowKaiSettings(true)} fetchBriefing={async()=>{
+      {view==="schedule"&&<SchedView sch={sch} sa={sa} approve={()=>setSa(true)} comp={comp} focus={id=>{const t=tasks.find(x=>x.id===id);if(t)setFt(t)}} gs={gs} kaiBriefing={kaiBriefing} kaiLoading={kaiLoading} kaiConnected={kaiConnected} onKaiSettings={()=>setShowKaiSettings(true)} calEvts={calEvts} gSignedIn={gSignedIn} fetchBriefing={async()=>{
         if(!getKaiSettings())return;setKaiLoading(true);
         const schDesc=sch.schedule.map(b=>fm(b.start)+"-"+fm(b.end)+" "+b.title+" ("+gP(b.project).name+")").join("\n");
         const msg="あなたはKai、Kenの右腕AIアシスタント。今日のスケジュールを見て、Kenに朝の一言ブリーフィングを日本語で書いて。短く、エネルギッシュに。スケジュール:\n"+schDesc;
@@ -240,7 +240,7 @@ function App(){
 }
 
 // ─── SCHEDULE VIEW ─────────────────────────────────────────────
-function SchedView({sch,sa,approve,comp,focus,gs,kaiBriefing,kaiLoading,kaiConnected,onKaiSettings,fetchBriefing}){
+function SchedView({sch,sa,approve,comp,focus,gs,kaiBriefing,kaiLoading,kaiConnected,onKaiSettings,fetchBriefing,calEvts=[],gSignedIn}){
   const{schedule:blocks,totalPts}=sch;
   const now=new Date(),curMin=now.getHours()*60+now.getMinutes();
   const briefingRef=useRef(false);
@@ -298,6 +298,10 @@ function SchedView({sch,sa,approve,comp,focus,gs,kaiBriefing,kaiLoading,kaiConne
       <button onClick={()=>{const t=blocks.find(x=>x.type==="task"&&curMin<=x.end);if(t)focus(t.id)}} style={{flex:1,padding:"16px",border:"none",borderRadius:"12px",background:"linear-gradient(135deg,#E040FB,#7B68EE)",color:"#fff",fontSize:"15px",fontWeight:700,cursor:"pointer",fontFamily:"inherit",boxShadow:"0 4px 16px #E040FB33"}}>⚡ 10分だけやる</button>
       <button onClick={()=>setSa(false)} style={{padding:"16px 20px",border:"1px solid #333",borderRadius:"12px",background:"transparent",color:"#888",fontSize:"13px",cursor:"pointer",fontFamily:"inherit"}}>🔄</button>
     </div>
+    {gSignedIn&&calEvts.length>0&&(()=>{const td2=tS();const todEvts=calEvts.filter(e=>(e.start?.dateTime||e.start?.date||"").startsWith(td2));if(!todEvts.length)return null;return(<div style={{marginTop:"14px",padding:"12px",borderRadius:"10px",background:"#4285F408",border:"1px solid #4285F422"}}>
+      <div style={{fontSize:"11px",fontWeight:600,color:"#4285F4",marginBottom:"8px"}}>📅 今日のGoogleカレンダー</div>
+      {todEvts.map((e,i)=>{const st=e.start?.dateTime?new Date(e.start.dateTime).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):"終日";const en=e.end?.dateTime?new Date(e.end.dateTime).toLocaleTimeString("ja-JP",{hour:"2-digit",minute:"2-digit"}):"";return(<div key={i} style={{padding:"6px 10px",borderRadius:"6px",background:"#111122",border:"1px solid #4285F422",marginBottom:"4px",display:"flex",gap:"8px",alignItems:"center"}}><span style={{fontSize:"11px",color:"#4285F4",fontFamily:"JetBrains Mono",flexShrink:0}}>{st}{en?`-${en}`:""}</span><span style={{fontSize:"11px",color:"#ddd"}}>{e.summary||"(無題)"}</span></div>)})}
+    </div>)})()}
   </div>);
 }
 
