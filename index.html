@@ -157,9 +157,32 @@ function App(){
   const[gSignedIn,setGSignedIn]=useState(false);const[calEvts,setCalEvts]=useState([]);const[gLoading,setGLoading]=useState(false);const[gTasks,setGTasks]=useState([]);
 
   // Init Google APIs
-  useEffect(()=>{const waitAndInit=async()=>{let attempts=0;while((typeof gapi==="undefined"||typeof google==="undefined")&&attempts<30){await new Promise(r=>setTimeout(r,200));attempts++}await initGapi();initGis(resp=>{if(resp.error){console.error(resp);return}setGSignedIn(true);gapi.client.setToken({access_token:resp.access_token});refreshCal();(async()=>{const gt=await fetchGoogleTasks();setGTasks(gt)})()})};waitAndInit()},[]);
-  const handleGSignIn=()=>{if(!tokenClient)return;tokenClient.requestAccessToken({prompt:"consent"})};
-  const handleGSignOut=()=>{const token=gapi.client.getToken();if(token){google.accounts.oauth2.revoke(token.access_token);gapi.client.setToken(null)}setGSignedIn(false);setCalEvts([])};
+  useEffect(()=>{const waitAndInit=async()=>{let attempts=0;while((typeof gapi==="undefined"||typeof google==="undefined")&&attempts<30){await new Promise(r=>setTimeout(r,200));attempts++}await initGapi();
+    // 保存済みトークンがあれば自動ログイン
+    const savedToken=localStorage.getItem('g_token');
+    const savedExp=parseInt(localStorage.getItem('g_token_exp')||'0');
+    if(savedToken&&savedExp>Date.now()){
+      try{
+        gapi.client.setToken({access_token:savedToken});
+        // トークンが有効か確認
+        const testRes=await fetch('https://www.googleapis.com/oauth2/v3/tokeninfo?access_token='+savedToken);
+        if(testRes.ok){
+          setGSignedIn(true);
+          refreshCal();
+          (async()=>{const gt=await fetchGoogleTasks();setGTasks(gt)})();
+        }else{
+          localStorage.removeItem('g_token');
+          localStorage.removeItem('g_token_exp');
+        }
+      }catch(e){localStorage.removeItem('g_token')}
+    }
+    initGis(resp=>{if(resp.error){console.error(resp);return}
+    const token=resp.access_token;
+    localStorage.setItem('g_token',token);
+    localStorage.setItem('g_token_exp',Date.now()+3500000);
+    setGSignedIn(true);gapi.client.setToken({access_token:token});refreshCal();(async()=>{const gt=await fetchGoogleTasks();setGTasks(gt)})()})};waitAndInit()},[]);
+  const handleGSignIn=()=>{if(!tokenClient)return;tokenClient.requestAccessToken({prompt:""})};
+  const handleGSignOut=()=>{const token=gapi.client.getToken();if(token){google.accounts.oauth2.revoke(token.access_token);gapi.client.setToken(null)}localStorage.removeItem('g_token');localStorage.removeItem('g_token_exp');setGSignedIn(false);setCalEvts([]);setGTasks([])};
   const refreshCal=async()=>{setGLoading(true);try{const events=await fetchCalendarEvents();setCalEvts(events)}catch(e){console.error(e)}setGLoading(false)};const refreshGTasks=async()=>{const gt=await fetchGoogleTasks();setGTasks(gt)};
 
   useEffect(()=>{(async()=>{try{const d=await fbGet("data");if(d&&d.tasks){setTasks(d.tasks);setRoutines(d.routines||DEFAULT_ROUTINES);setGs(d.gs||{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0});setSa(d.sa||false)}else{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES);await fbSet("data",{tasks:INITIAL_TASKS,routines:DEFAULT_ROUTINES,gs:{totalPts:0,streak:0,lastActiveDate:"",weeklyPts:[],completedToday:0},sa:false})}}catch{setTasks(INITIAL_TASKS);setRoutines(DEFAULT_ROUTINES)}setLd(true)})()},[]);
